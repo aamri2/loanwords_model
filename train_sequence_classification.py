@@ -64,10 +64,11 @@ feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000
 
 def prepare_dataset(batch):
     batch['input_values'] = feature_extractor(batch['audio_array'], sampling_rate=batch['audio_sampling_rate']).input_values[0]
-    batch['labels'] = vocab_dict[batch['target_utterance']]
+    batch['labels'] = batch['target_utterance']
     return batch
 
 prepared_targets = targets.map(prepare_dataset, remove_columns=targets.column_names['train'])
+prepared_targets.class_encode_column('labels')
 
 data_collator = DataCollatorWithPadding(tokenizer=feature_extractor, padding=True)
 accuracy_metric = evaluate.load('accuracy')
