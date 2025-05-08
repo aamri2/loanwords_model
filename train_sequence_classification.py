@@ -1,4 +1,4 @@
-from datasets import load_dataset, Dataset
+from datasets import load_dataset, Dataset, Value
 import datasets
 import json
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2ForSequenceClassification, TrainingArguments, Trainer, DataCollatorWithPadding
@@ -53,13 +53,6 @@ targets_train = Dataset.from_generator(generator, gen_kwargs = {'batch': timit['
 targets = datasets.DatasetDict({'test': targets_test, 'train': targets_train})
 targets.save_to_disk('../datasets/timit_targets')
 
-vocabs = targets.unique('target_utterance')
-
-vocab_list = list(set(vocabs['train']) | set(vocabs['test']))
-vocab_dict = {v: k for k, v in enumerate(vocab_list)}
-with open('vocab.json', 'w') as f:
-    json.dump(vocab_dict, f)
-
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 
 def prepare_dataset(batch):
@@ -68,7 +61,7 @@ def prepare_dataset(batch):
     return batch
 
 prepared_targets = targets.map(prepare_dataset, remove_columns=targets.column_names['train'])
-prepared_targets.class_encode_column('labels')
+prepared_targets = prepared_targets.class_encode_column('labels')
 
 data_collator = DataCollatorWithPadding(tokenizer=feature_extractor, padding=True)
 accuracy_metric = evaluate.load('accuracy')
@@ -79,11 +72,14 @@ def compute_metrics(pred):
     accuracy = accuracy_metric.compute(predictions=predictions, references=pred.label_ids)
     return {'accuracy': accuracy}
 
+labels = prepared_targets['train'].features['labels'].names
+label2id = {label: i for i, label in enumerate(labels)}
+id2label = {i: label for i, label in enumerate(labels)}
 model = Wav2Vec2ForSequenceClassification.from_pretrained(
     '../wav2vec2-base',
-    num_labels = len(vocab_dict),
-    label2id = vocab_dict,
-    id2label = {v: k for k, v in vocab_dict.items()}
+    num_labels = len(labels),
+    label2id = label2id,
+    id2label = id2label
 )
 model.freeze_base_model()
 
