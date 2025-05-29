@@ -1,17 +1,10 @@
 from datasets import Dataset, Audio#, load_dataset
-import json
-from transformers import Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor, Wav2Vec2ForCTC #, TrainingArguments, Trainer
-import evaluate
-import torch
-from dataclasses import dataclass
-# from typing import List, Dict, Optional, Union
 import numpy, pandas
-from pyctcdecode import build_ctcdecoder
 import random
 import seaborn
 import matplotlib.pyplot as plt
 
-from model_handler import centre_probabilities, select_where, count_where, probability, pool, map_to_result, map_to_result_no_labels
+from model_handler import centre_probabilities, count_where, probability, pool, model, probabilities, audio_to_input_values, feature_extractor
 
 human_responses = pandas.read_csv('../human_vowel_responses.csv')
 human_responses = human_responses[human_responses['language_indiv'] == 'english'].rename(columns = {'#phone': 'phone'})
@@ -26,16 +19,36 @@ for i, vowel in enumerate(vowels):
     assert len(vowel) == 1
     vowels[i] = vowel[0]
 
-world_vowels = Dataset.from_dict({'audio': [f'../stimuli_world_vowels/{audio_file}.wav' for audio_file in audio_files], 'language': languages, 'vowel': vowels, 'file': audio_files}).cast_column('audio', Audio())
-timit_vowels = ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ay', 'ah', 'oy', 'ow', 'uh', 'uw', 'er', 'ix']
 vowel_order = 'iɪyʏeɛøœaæɐɑʌoɔɤuʊɯ:ː\u0303'
+
+def world_vowel_sort(data: pandas.DataFrame):
+    data = data.sort_values(
+        by = 'classification',
+        key = lambda x: [[vowel_order.index(c) for c in s] for s in x]
+    ).sort_values(by = 'file', kind = 'mergesort').sort_values(
+        by = 'vowel',
+        key = lambda x: [[vowel_order.index(c) for c in s] for s in x],
+        kind = 'mergesort'
+    ).sort_values(by = ['language'], kind = 'mergesort')
+    return data
+
+try:
+    world_vowel_probabilities = pandas.read_csv('probabilities/world_vowels_classification.csv')
+except FileNotFoundError:
+    world_vowels = Dataset.from_dict({'audio': [f'../stimuli_world_vowels/{audio_file}.wav' for audio_file in audio_files], 'language': languages, 'vowel': vowels, 'file': audio_files}).cast_column('audio', Audio())
+    world_vowels = audio_to_input_values(world_vowels, feature_extractor)
+    world_vowel_probabilities = probabilities(model, world_vowels)
+    world_vowel_probabilities = world_vowel_sort(world_vowel_probabilities)
+    world_vowel_probabilities.to_csv('probabilities/world_vowels_classification.csv')
+    
+
+timit_vowels = ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ay', 'ah', 'oy', 'ow', 'uh', 'uw', 'er', 'ix']
 possible_human_responses = sorted(list(set(human_responses['assimilation'])), key = lambda x: [vowel_order.index(c) for c in x])
 
-
-
-world_vowels = world_vowels.map(centre_probabilities)
-
-
+target_columns = {'language_stimuli': 'language', 'phone': 'vowel', 'filename': 'file'}
+human_responses_pooled = pandas.melt(pandas.crosstab([human_responses[column] for column in target_columns.keys()], human_responses['assimilation'], colnames = ['classification'], normalize = 'index'), ignore_index = False, value_name = 'probabilities').reset_index().rename(target_columns, axis = 'columns')
+human_responses_pooled = world_vowel_sort(human_responses_pooled)
+human_responses_pooled.to_csv('probabilities/world_vowels_human.csv')
 
 # vowels_languages = [(vowel, language) for vowel in sorted(list(set(vowels)), key = lambda x: [vowel_order.index(c) for c in x]) for language in sorted(list(set(human_responses[human_responses['phone'] == vowel]['language_stimuli'])))]
 # human_responses_pooled = pandas.DataFrame({

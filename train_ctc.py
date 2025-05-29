@@ -6,7 +6,6 @@ import torch
 from dataclasses import dataclass
 # from typing import List, Dict, Optional, Union
 import numpy, pandas
-from pyctcdecode import build_ctcdecoder
 import random
 import seaborn
 import matplotlib.pyplot as plt

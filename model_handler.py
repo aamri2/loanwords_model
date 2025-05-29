@@ -5,7 +5,7 @@ from transformers import Wav2Vec2Config, AutoModel, PreTrainedModel, Wav2Vec2Fea
 from train_sequence_classification import Wav2Vec2WithAttentionClassifier
 from datasets import Dataset
 from pyctcdecode.decoder import build_ctcdecoder
-from typing import Union, Self
+from typing import Union, Self, Optional, Any
 
 model_dir = '../models'
 model_name = 'final_model_classification'
@@ -57,40 +57,32 @@ def centre_probabilities(batch):
     batch['probabilities'] = torch.nn.functional.softmax(centre_logits, dim=-1)[0][:63] # remove <pad>
     return batch
 
-def select_where(df, **column_values):
-    for column, value in column_values.items():
-        df = df[df[column] == value]
-    return df
-
-def count_where(df, **column_values):
-    return len(select_where(df, **column_values))
+def pool(probabilities: pandas.DataFrame, *args: str, **kwargs: Any):
+    """
+    Returns a pivot table in wide format.
     
-def probability(probabilities, responses, response = None, **column_values):
-    index = [i for i in range(len(probabilities)) if all(probabilities[column][i] == value for column, value in column_values.items())]
-    mean_probabilities = numpy.array(probabilities[index]['probabilities']).mean(0)[[range(model.config.num_labels)]]
-    normed_probabilities = mean_probabilities * 1/mean_probabilities.sum()
-    if response:
-        return normed_probabilities[responses.index(response)]
-    else:
-        return normed_probabilities
+    Args:
+        *args: Columns to pool across.
+        **kwargs: Columns to filter by.
+    """
 
-def pool(probabilities, responses: Union[list, dict], index, index_names):
-    if isinstance(responses, list):
-        responses = {response: response for response in responses}
-        
-    if not isinstance(index[0], tuple):
-        index = [(i,) for i in index]
-        index_names = [index_names]
-
-    pooled_probabilities = pandas.DataFrame(columns = model.config.id2label.values(), index = ['.'.join(indices) for indices in index])
-    for indices in index:
-        pooled_probabilities.loc['.'.join(indices)] = probability(probabilities, [value for key, value in responses.items()], **{index_name: i for i, index_name in zip(indices, index_names)})
+    if kwargs:
+        filter = zip(*[probabilities[column] == value for column, value in kwargs.items()])
+        probabilities = probabilities[[all(row) for row in filter]]
     
-    for column in pooled_probabilities:
-        pooled_probabilities[column] = [float(i) for i in pooled_probabilities[column]]
-    
+    pooled_probabilities = probabilities.pivot_table(values = 'probabilities', columns = 'classification', index = args, sort = False)
     return pooled_probabilities
 
+def audio_to_input_values(dataset: Dataset, feature_extractor):
+    """Removes 'audio' column and adds an 'input_values' column using feature_extractor."""
+
+    def _generate_input_values(batch):
+        audio = batch['audio']
+        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
+        return batch
+
+    dataset = dataset.map(_generate_input_values, remove_columns = 'audio')
+    return dataset
 
 def probabilities(model, dataset: Dataset, id2label = None):
     """Create DataFrame in long format containing classification probabilities"""
@@ -107,7 +99,7 @@ def probabilities(model, dataset: Dataset, id2label = None):
     
     for row in dataset.to_iterable_dataset():
         with torch.no_grad():
-            input_values = torch.tensor(row['input_values'])#.unsqueeze(0)
+            input_values = torch.tensor(row['input_values']).unsqueeze(0)
             logits = model(input_values)['logits'].cpu().detach()[0]
         probabilities = torch.nn.functional.softmax(logits, dim=-1)
         data['probabilities'].extend(probabilities)
@@ -115,4 +107,4 @@ def probabilities(model, dataset: Dataset, id2label = None):
         for column_name in column_names:
             data[column_name].extend([row[column_name]] * len(probabilities))
     
-    return pandas.DataFrame(data)
+    return pandas.DataFrame(data).astype({'probabilities': float}).astype({'probabilities': float})
