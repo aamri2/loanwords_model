@@ -1,124 +1,204 @@
-from datasets import load_dataset, Dataset, Value
+from datasets import load_dataset, Dataset
 import datasets
-import json
-from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2ForSequenceClassification, TrainingArguments, Trainer, DataCollatorWithPadding
+from transformers import Wav2Vec2FeatureExtractor, TrainingArguments, Trainer, Wav2Vec2Model, Wav2Vec2PreTrainedModel, BatchFeature
 import evaluate
 import torch
+from torch import nn
+import numpy
+from dataset_handler import prepare_targets, prepare_masked_targets
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Union
-import numpy, pandas
-from pyctcdecode import build_ctcdecoder
-import random
-import matplotlib.pyplot as plt
-
+from typing import Any
 #offline = False # set to True for DRAC jobs; requires prepared dataset
 
-try:
-    prepared_targets = datasets.load_from_disk('../prepared_targets')
-    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
-except FileNotFoundError:
-    timit = load_dataset('timit_asr', data_dir='../timit/TIMIT')
-    timit = timit.remove_columns(['file', 'word_detail', 'dialect_region', 'sentence_type', 'speaker_id', 'id'])
+class AttentionPooling(nn.Module):
+    def __init__(self, hidden_size):
+        super().__init__()
+        self.attention = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.Tanh(),
+            nn.Linear(hidden_size, 1)
+        )
 
-    timit_folding = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er', 'hv': 'hh', 'ix': 'ih', 'el': 'l', 'em': 'm', 'en': 'n', 'nx': 'n', 'eng': 'ng', 'ux': 'uw'} # did not merge zh/sh
-    timit_vowels = ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ay', 'ah', 'oy', 'ow', 'uh', 'uw', 'er', 'ix']
-    target_labels = {'iy': 'i', 'ih': 'ɪ', 'ey': 'eɪ', 'eh': 'ɛ', 'ae': 'æ', 'aa': 'ɑ', 'ah': 'ʌ', 'ow': 'oʊ', 'uw': 'u', 'uh': 'ʊ'} # desired label: timit label
+    def forward(self, hidden_states, attention_mask=None):
+        scores = self.attention(hidden_states).squeeze(-1)
+        if attention_mask is not None:
+            scores = scores.masked_fill(attention_mask == 0, float('-inf'))
 
-    def find_targets(batch):
-        # fold phones
-        utterance = [timit_folding.get(phone, phone) for phone in batch['phonetic_detail']['utterance']]
-        # positions and labels of all C+VC+ sequences (excluding non-target diphthongs)
-        target_indices = [i for i, phone in enumerate(utterance) if phone in target_labels.keys()]
-        vowel_indices = [i for i, phone in enumerate(utterance) if phone in timit_vowels]
-        target_start = [None for i in target_indices]
-        target_end = [None for i in target_indices]
-        target_utterance = [target_labels[utterance[i]] for i in target_indices]
-        for i, target_index in enumerate(target_indices):
-            preceding_vowel_index = max(target_indices[:i] + [j for j in vowel_indices if j < target_index] + [0])
-            target_start[i] = batch['phonetic_detail']['start'][preceding_vowel_index + 1]
-            following_vowel_index = min([j for j in target_indices[i:] if j > target_index] + [j for j in vowel_indices if j > target_index] + [len(utterance)])
-            target_end[i] = batch['phonetic_detail']['stop'][following_vowel_index - 1]
-        batch['target_start'] = target_start
-        batch['target_end'] = target_end
-        batch['target_utterance'] = target_utterance    
-        return batch
-    timit = timit.map(find_targets)
+        weights = torch.softmax(scores, dim=1).unsqueeze(-1)
+        weighted_sum = torch.sum(hidden_states * weights, dim=1)
+        return weighted_sum
 
-    def generator(batch):
-        for row in range(len(batch)):
-            sampling_rate = batch[row]['audio']['sampling_rate']
-            for target_start, target_end, target_utterance in zip(batch[row]['target_start'], batch[row]['target_end'], batch[row]['target_utterance']):
-                yield {
-                    'audio_array': batch[row]['audio']['array'][target_start:target_end],
-                    'audio_sampling_rate': sampling_rate,
-                    'target_utterance': target_utterance
-                }
+
+class Wav2Vec2WithAttentionClassifier(Wav2Vec2PreTrainedModel):
+    """
+    Custom Wav2Vec2 sequence classification with a simple attention head.
+    """
+    def __init__(self, config):
+        super().__init__(config)
+        self.wav2vec2 = Wav2Vec2Model(config)
+        self.attention_pooling = AttentionPooling(config.hidden_size)
+        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+        self.init_weights()
+    
+    def freeze_base_model(self):
+        for param in self.wav2vec2.parameters():
+            param.requires_grad = False
+        
+
+    def forward(self, input_values, attention_mask=None, frame_mask=None, labels = None):
+        """
+        Args:
+            frame_mask: This mask is only applied after the wav2vec2,
+                but before the attention pooling. This can be used,
+                for example, to classify part of a larger sequence.
+        """
+        outputs = self.wav2vec2(input_values, attention_mask=attention_mask)
+        hidden_states = outputs.last_hidden_state
+
+        if frame_mask is not None:
+            # adjust to actual length from estimate
+            if frame_mask.shape[1] < hidden_states.shape[1]:
+                frame_mask = torch.nn.functional.pad(frame_mask, (0, hidden_states.shape[1] - frame_mask.shape[1]), value = 0.0)
+            elif frame_mask.shape[1] > hidden_states.shape[1]:
+                frame_mask = frame_mask[:, :hidden_states.shape[1]]
             
-    targets_test = Dataset.from_generator(generator, gen_kwargs = {'batch': timit['test']}, split = datasets.Split.TEST)
-    targets_train = Dataset.from_generator(generator, gen_kwargs = {'batch': timit['train']}, split = datasets.Split.TRAIN)
-    targets = datasets.DatasetDict({'test': targets_test, 'train': targets_train})
-    targets.save_to_disk('../timit_targets')
+            frame_mask = frame_mask.unsqueeze(-1).type_as(hidden_states)
+            hidden_states = hidden_states * frame_mask
 
-    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+        pooled_output = self.attention_pooling(hidden_states)
+        logits = self.classifier(pooled_output)
+        loss = None
+        if labels is not None:
+            if self.config.problem_type is None:
+                if self.config.num_labels == 1:
+                    self.config.problem_type = "regression"
+                
+                elif self.config.num_labels > 1 and labels.dtype in (torch.long, torch.int):
+                    self.config.problem_type = "single_label_classification"
+                
+                else:
+                    self.config.problem_type = "multi_label_classification"
+            
 
-    def prepare_dataset(batch):
-        batch['input_values'] = feature_extractor(batch['audio_array'], sampling_rate=batch['audio_sampling_rate']).input_values[0]
-        batch['labels'] = batch['target_utterance']
+            if self.config.problem_type == "regression":
+                loss_fn = nn.MSELoss()
+            
+            elif self.config.problem_type == "single_label_classification":
+                loss_fn = nn.CrossEntropyLoss()
+            
+            elif self.config.problem_type == "multi_label_classification":
+                loss_fn = nn.BCEWithLogitsLoss()
+            
+            loss = loss_fn(logits, labels)
+        
+        return {'loss': loss, 'logits': logits} if loss is not None else {'logits': logits}
+
+
+@dataclass
+class DataCollatorWithFrameMask:
+    """Pads and returns frame mask."""
+
+    processor: Wav2Vec2FeatureExtractor
+    samples_per_frame: int
+    sampling_rate: int = 16000
+
+    def __call__(self, features: list[dict[str, Any]]) -> BatchFeature:
+        labels = [f['labels'] for f in features] if 'labels' in features[0] else None
+        input_values = [f['input_values'] for f in features]
+
+        batch = self.processor(input_values, padding=True, return_tensors='pt', sampling_rate=self.sampling_rate)
+
+        max_input_length = batch['input_values'].shape[1]
+        max_num_frames = max_input_length // self.samples_per_frame
+
+        frame_masks = []
+        for f in features:
+            sample_start = f.get('sample_start', 0)
+            sample_stop = f.get('sample_stop', max_input_length)
+
+            start_frame = max(sample_start // self.samples_per_frame, 0)
+            stop_frame = min((sample_stop + self.samples_per_frame - 1) // self.samples_per_frame, max_num_frames)
+
+            mask = torch.zeros(max_num_frames, dtype=torch.float)
+            mask[start_frame:stop_frame] = 1.0
+            frame_masks.append(mask)
+
+        frame_masks = torch.nn.utils.rnn.pad_sequence(frame_masks, batch_first=True, padding_value=0.0)
+
+        batch['frame_mask'] = frame_masks
+
+        if labels is not None:
+            batch['labels'] = torch.tensor(labels)
+        
         return batch
 
-    prepared_targets = targets.map(prepare_dataset, remove_columns=targets.column_names['train'])
-    prepared_targets = prepared_targets.class_encode_column('labels')
 
-    prepared_targets.save_to_disk('../prepared_targets')
 
-#data_collator = DataCollatorWithPadding(tokenizer=feature_extractor, padding=True)
-accuracy_metric = evaluate.load('accuracy')
 
-def compute_metrics(pred):
-    pred_logits = pred.predictions
-    predictions = numpy.argmax(pred_logits, axis=1)
-    accuracy = accuracy_metric.compute(predictions=predictions, references=pred.label_ids)
-    return {'accuracy': accuracy}
 
-labels = prepared_targets['train'].features['labels'].names
-label2id = {label: i for i, label in enumerate(labels)}
-id2label = {i: label for i, label in enumerate(labels)}
-model = Wav2Vec2ForSequenceClassification.from_pretrained(
-    '../wav2vec2-base',
-    num_labels = len(labels),
-    label2id = label2id,
-    id2label = id2label
-)
-model.freeze_base_model()
 
-training_args = TrainingArguments(
-    group_by_length=True,
-    per_device_train_batch_size=32,
-    eval_strategy='steps',
-    num_train_epochs=30,
-    fp16=True,
-    gradient_checkpointing=True,
-    save_steps=500,
-    eval_steps=500,
-    logging_steps=500,
-    learning_rate=1e-4,
-    weight_decay=0.005,
-    warmup_steps=1000,
-    save_total_limit=2,
-    push_to_hub=False,
-    output_dir='../trainer_output'
-)
+if __name__ == '__main__':
+    try:
+        masked_targets = datasets.load_from_disk('../masked_targets')
+    except FileNotFoundError:
+        masked_targets = prepare_masked_targets()
+        masked_targets.save_to_disk('../masked_targets')
+    
+    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    compute_metrics=compute_metrics,
-    train_dataset=prepared_targets['train'],
-    eval_dataset=prepared_targets['test'],
-    processing_class=feature_extractor
-)
+    
+    accuracy_metric = evaluate.load('accuracy')
 
-trainer.train()
+    def compute_metrics(pred):
+        pred_logits = pred.predictions
+        predictions = numpy.argmax(pred_logits, axis=1)
+        accuracy = accuracy_metric.compute(predictions=predictions, references=pred.label_ids)
+        return {'accuracy': accuracy}
 
-# tokenizer.save_pretrained(f'{model_dir}/{model}')
-# trainer.save_model(f'{model_dir}/{model}')
+    labels = masked_targets['train'].features['labels'].names
+    label2id = {label: i for i, label in enumerate(labels)}
+    id2label = {i: label for i, label in enumerate(labels)}
+
+    model = Wav2Vec2WithAttentionClassifier.from_pretrained(
+        '../wav2vec2-base',
+        num_labels = len(labels),
+        label2id = label2id,
+        id2label = id2label
+    )
+    model.freeze_base_model()
+
+    data_collator = DataCollatorWithFrameMask(processor=feature_extractor, samples_per_frame=model.wav2vec2.config.inputs_to_logits_ratio)
+
+
+    training_args = TrainingArguments(
+        group_by_length=True,
+        per_device_train_batch_size=32,
+        eval_strategy='steps',
+        num_train_epochs=30,
+        fp16=True,
+        gradient_checkpointing=True,
+        save_steps=500,
+        eval_steps=500,
+        logging_steps=500,
+        learning_rate=1e-4,
+        weight_decay=0.005,
+        warmup_steps=1000,
+        save_total_limit=2,
+        push_to_hub=False,
+        output_dir='../trainer_output'
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        compute_metrics=compute_metrics,
+        train_dataset=masked_targets['train'],
+        eval_dataset=masked_targets['test'],
+        processing_class=feature_extractor,
+        data_collator=data_collator
+    )
+
+    trainer.train()
+
+    # tokenizer.save_pretrained(f'{model_dir}/{model}')
+    # trainer.save_model(f'{model_dir}/{model}')
