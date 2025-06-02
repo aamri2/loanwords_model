@@ -5,17 +5,15 @@ from transformers import Wav2Vec2Config, AutoModel, PreTrainedModel, Wav2Vec2Fea
 from train_sequence_classification import Wav2Vec2WithAttentionClassifier
 from datasets import Dataset
 from pyctcdecode.decoder import build_ctcdecoder
-from typing import Union, Self, Optional, Any
+from typing import Union, Self, Optional, Any, Callable
+import seaborn
+import matplotlib.pyplot as plt
 
 model_dir = '../models'
 model_name = 'final_model_classification'
 
 model = Wav2Vec2WithAttentionClassifier.from_pretrained(f'{model_dir}/{model_name}')
 feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(f'{model_dir}/{model_name}')
-
-# with open(f'{model_dir}/{model_name}/vocab.json') as f:
-#     vocab_dict = json.load(f)
-# vocab_list = [x[0] for x in sorted(vocab_dict.items(), key = lambda x: x[1])]
 
 
 
@@ -43,7 +41,21 @@ def map_to_result_no_labels(batch):
 # model = Wav2Vec2ForCTC.from_pretrained(f'{model_dir}/{model}')
 # decoder = build_ctcdecoder([chr(i) for i in range(63)]) # unique two-character sequences
 
+def ctc_wrapper(model: PreTrainedModel) -> Callable[[torch.Tensor], dict[str, torch.Tensor]]:
+    """
+    Model wrapper for the probabilities pipeline with CTC.
+    
+    Gets the three middlest frames and averages them.
+    """
 
+    def model_wrapper(input_values: torch.Tensor):
+        with torch.no_grad():
+            logits: torch.Tensor = model(input_values).logits.cpu().detach()[0]
+        centre = len(logits) // 2
+        centre_logits = logits[centre-1:centre+2].mean(0, keepdim = True)
+        return {'logits': centre_logits}
+    
+    return model_wrapper
 
 def centre_probabilities(batch):
     """Used for CTC pooling"""
@@ -101,10 +113,29 @@ def probabilities(model, dataset: Dataset, id2label = None):
         with torch.no_grad():
             input_values = torch.tensor(row['input_values']).unsqueeze(0)
             logits = model(input_values)['logits'].cpu().detach()[0]
-        probabilities = torch.nn.functional.softmax(logits, dim=-1)
+
+        if id2label:
+            logits_to_keep = []
+            for id in id2label.keys(): # allows for selecting certain classifications only
+                logits_to_keep.append(logits[id])
+            probabilities = torch.nn.functional.softmax(torch.Tensor(logits_to_keep), dim=-1)
+            data['classification'].extend(id2label.values())
+        else:
+            probabilities = torch.nn.functional.softmax(logits, dim=-1)
+        
         data['probabilities'].extend(probabilities)
-        data['classification'].extend(id2label.values())
         for column_name in column_names:
             data[column_name].extend([row[column_name]] * len(probabilities))
     
-    return pandas.DataFrame(data).astype({'probabilities': float}).astype({'probabilities': float})
+    return pandas.DataFrame(data).astype({'probabilities': float})
+
+def heatmap(probabilities: Union[pandas.DataFrame, list[pandas.DataFrame]], *args: str, **kwargs: Any):
+    """Uses pool to create a seaborn heatmap."""
+    if isinstance(probabilities, list):
+        seaborn.heatmap(pool(probabilities[0], *args, **kwargs), cmap = 'crest', square = True)
+        for probability in probabilities[1:]:
+            plt.figure()
+            seaborn.heatmap(pool(probability, *args, **kwargs), cmap = 'crest', square = True)
+    else:
+        seaborn.heatmap(pool(probabilities, *args, **kwargs), cmap = 'crest', square = True)
+    plt.show()
