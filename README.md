@@ -18,16 +18,19 @@ The full list of model + probability specifications to compare is:
             - `attn_class_3_`
                 - `timitEV`
                 - `timitMV`
+                - `wvEN`
         - `1_`
             - `centreMeans_vowels` ✅
             - `attn_class_3_`
                 - `timitEV`
                 - `timitMV`
+                - `wvEN` ✅
         - `2_`
             - `centreMeans_vowels`
             - `attn_class_3_`
                 - `timitEV`
                 - `timitMV`
+                - `wvEN`
 
 Existing probabilities are marked ✅
 
@@ -42,8 +45,9 @@ Probabilities are named according to the following convention:
 where
 - `p`: The letter 'p' (for 'probabilities')
 - `model`: The full model specification. See [naming conventions](#models). `human` is used for human responses.
-- `poolingMethod`: If the model does not put out probabilities that can be used directly (e.g. a CTC model), this describes the method used to get the probabilities. The only method in use is:
+- `poolingMethod`: If the model does not put out probabilities that can be used directly (e.g. a CTC model), this describes the method used to get the probabilities. The methods in use are:
     - `centreMean`: Take the mean of the three centremost frames of the output sequence.
+    - `cvcBeamSearch`: Use a special beam search algorithm that only looks for CVC sequences, where consonants are pooled.
 - `outputs`: The possible outputs that the probabilities select between, if not all outputs from the model are used. Right now, the only outputs in use are:
     - `vowels`: English vowel classifications
 - `dataset`: The dataset used as stimuli. The only dataset in use for this is `wv`.
@@ -87,6 +91,7 @@ Any fine-tuned model can then be used as a pre-trained model for another head. I
 
 Possible prefixes:
 - `prep_`: The dataset has been prepared for training.
+- `pretrainedModel_`: The dataset has been run through the pretrained model.
 
 The following datasets are in use, with the following abbreviations:
 - `timit`: TIMIT
