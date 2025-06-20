@@ -1,9 +1,69 @@
 from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict, load_dataset, load_from_disk
 import datasets
 import json
+import pandas
 from typing import Optional, Union
 from collections.abc import Callable
-from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2CTCTokenizer, Wav2Vec2Processor
+import torch
+from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2CTCTokenizer, Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2PhonemeCTCTokenizer
+
+class PhoneDataset(Dataset):
+    """Extends dataset with useful attributes and functions for phonetic or phonemic transcriptions."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    # TODO
+
+
+def throughPretrainedModel(dataset, model):
+    """Runs a prepared dataset through a given base model."""
+
+    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+
+    def process_row(batch):
+        input_values = feature_extractor(batch['input_values'], sampling_rate=16000, return_tensors='pt', padding=True)['input_values']
+        with torch.no_grad():
+            batch['input_values'] = model(input_values).last_hidden_state.detach()
+        return batch
+        
+    return dataset.map(process_row, batched=True, batch_size=8)
+
+def prepare_timitMV_w2v2():
+    """Runs TIMIT MV through w2v2."""
+
+    try:
+        timit = load_from_disk('../prep_timitMV')
+    except FileNotFoundError:
+        timit = prepare_masked_targets()
+        timit.save_to_disk('../prep_timitMV')
+
+    model = Wav2Vec2Model.from_pretrained('../w2v2')
+    
+    return throughPretrainedModel(timit, model)
+
+def prepare_wvEN():
+    """Prepares World Vowels English stimuli."""
+    
+    wv = pandas.read_csv('WorldVowels_stimuli.csv')
+    files = ['../wv/' + i for i in wv[wv['language'] == 'EN']['#file_extract']]
+    phone = list(wv[wv['language'] == 'EN']['#phone'])
+    wvEN = datasets.Dataset.from_dict({'audio': files, 'labels': phone}, split=datasets.Split.TRAIN)\
+        .cast_column('audio', datasets.Audio())\
+        .class_encode_column('labels')
+    #wvEN = wvEN.train_test_split(seed=2025, stratify_by_column='labels')
+
+    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+
+    def prepare_dataset(batch):
+        audio = batch['audio']
+        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
+        return batch
+
+    prep_wvEN = wvEN.map(prepare_dataset, remove_columns=['audio'])
+    return prep_wvEN
+
+
 
 def prepare_timit_ctc(): #TODO: return
     """Prepares TIMIT for CTC sequence classification."""
@@ -29,7 +89,7 @@ def prepare_timit_ctc(): #TODO: return
     with open('vocab.json', 'w') as f:
         json.dump(vocab_dict, f)
 
-    tokenizer = Wav2Vec2CTCTokenizer(f'{model_dir}/{model}/vocab.json')
+    tokenizer = Wav2Vec2PhonemeCTCTokenizer(f'{model_dir}/{model}/vocab.json')
     feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
     processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
@@ -45,15 +105,15 @@ def prepare_timit_ctc(): #TODO: return
 
 def prepare_bl_ctc() -> tuple[datasets.DatasetDict, dict[str, int]]:
     """Prepares BL-Database and vocab_dict for CTC training."""
-    bl_database = load_dataset('../BL-Database/dataset')
-    bl_database = bl_database['train'].train_test_split() # type: ignore # known to be DatasetDict
-    bl_database = bl_database.cast_column('audio', datasets.Audio(sampling_rate=16000))
+    bl = load_dataset('../BL-Database/dataset')
+    bl = bl['train'].train_test_split() # type: ignore # known to be DatasetDict
+    bl = bl.cast_column('audio', datasets.Audio(sampling_rate=16000))
 
     def extract_utterances(batch):
         batch['phone'] = batch['phonetic_transcription']['phone']
         return batch
 
-    bl_database = bl_database.map(extract_utterances, remove_columns=['phonetic_transcription'])
+    bl = bl.map(extract_utterances, remove_columns=['phonetic_transcription'])
     
     # identify phones in data
     def extract_phones(batch):
@@ -61,14 +121,14 @@ def prepare_bl_ctc() -> tuple[datasets.DatasetDict, dict[str, int]]:
         vocab = list(set(all_phones))
         return {'vocab': [vocab], 'all_phones': [all_phones]}
     
-    vocabs = bl_database.map(extract_phones, batched=True, batch_size=-1, keep_in_memory=True, remove_columns=bl_database['train'].column_names)
+    vocabs = bl.map(extract_phones, batched=True, batch_size=-1, keep_in_memory=True, remove_columns=bl['train'].column_names)
     vocab_list = list(set(vocabs['train']['vocab'][0]) | set(vocabs['test']['vocab'][0]))
     vocab_list.extend(['|', '<unk>', '<pad>'])
     vocab_dict = {v: k for k, v in enumerate(vocab_list)}
     with open('vocab.json', 'w') as f:
         json.dump(vocab_dict, f)
 
-    tokenizer = Wav2Vec2CTCTokenizer('vocab.json')
+    tokenizer = Wav2Vec2PhonemeCTCTokenizer('vocab.json', do_phonemize=False)
     feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
     processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
@@ -76,11 +136,11 @@ def prepare_bl_ctc() -> tuple[datasets.DatasetDict, dict[str, int]]:
         audio = batch['audio']
         batch['input_values'] = processor(audio['array'], sampling_rate=audio['sampling_rate']).input_values[0]
         with processor.as_target_processor():
-            batch['labels'] = processor(batch['phone'], is_split_into_words=True).input_ids
+            batch['labels'] = processor(batch['phone'], is_split_into_words=True, add_special_tokens=False).input_ids
         return batch
     
-    bl_database = bl_database.map(prepare_dataset, remove_columns=bl_database['train'].column_names)
-    return bl_database, vocab_dict
+    bl = bl.map(prepare_dataset, remove_columns=bl['train'].column_names)
+    return bl, vocab_dict
 
 def prepare_targets():
     """Extracts TIMIT syllables into a dataset, which is prepared for training."""
