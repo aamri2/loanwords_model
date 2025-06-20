@@ -2,7 +2,8 @@
 
 import torch
 from torch import nn
-from transformers import Wav2Vec2PreTrainedModel, Wav2Vec2Model, Wav2Vec2ForCTC, Wav2Vec2FeatureExtractor, Wav2Vec2Processor, BatchFeature
+from transformers import Wav2Vec2PreTrainedModel, Wav2Vec2Model, Wav2Vec2ForCTC, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
+from transformers.feature_extraction_utils import BatchFeature
 from typing import Optional, Union, Any
 from dataclasses import dataclass
 

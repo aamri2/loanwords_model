@@ -2,10 +2,10 @@ import pandas, numpy
 import seaborn.objects
 import torch
 import json
-from transformers import Wav2Vec2Config, AutoModel, PreTrainedModel, Wav2Vec2FeatureExtractor
+from transformers import Wav2Vec2Config, AutoModel, Wav2Vec2FeatureExtractor
+from transformers.modeling_utils import PreTrainedModel
 from model_architecture import Wav2Vec2WithAttentionClassifier
 from datasets import Dataset
-from pyctcdecode.decoder import build_ctcdecoder
 from typing import Union, Self, Optional, Any, Callable
 import seaborn
 import matplotlib.pyplot as plt
@@ -19,29 +19,6 @@ feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(f'{model_dir}/{mode
 
 
 
-
-def map_to_result(batch):
-    with torch.no_grad():
-        input_values = torch.tensor(batch['input_values']).unsqueeze(0)
-        logits = model(input_values).logits.cpu().detach().numpy()[0]
-    
-    batch['pred_str'] = [vocab_list[ord(i)] for i in decoder.decode(logits)]
-    batch['text'] = [vocab_list[i] for i in batch['labels']]
-    return batch
-
-def map_to_result_no_labels(batch):
-    audio = batch['audio']
-    with torch.no_grad():
-        input_values = torch.tensor(processor(audio['array'], sampling_rate=audio['sampling_rate']).input_values[0]).unsqueeze(0)
-        logits = model(input_values).logits.cpu().detach().numpy()[0]
-    
-    batch['pred_str'] = [vocab_list[ord(i)] for i in decoder.decode(logits)]
-    batch['logits'] = logits
-    return batch
-
-# processor = Wav2Vec2Processor.from_pretrained(f'{model_dir}/{model}')
-# model = Wav2Vec2ForCTC.from_pretrained(f'{model_dir}/{model}')
-# decoder = build_ctcdecoder([chr(i) for i in range(63)]) # unique two-character sequences
 
 def ctc_wrapper(model: PreTrainedModel, **kwargs) -> Callable[[torch.Tensor], dict[str, torch.Tensor]]:
     """
@@ -136,7 +113,7 @@ def mae(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *a
 
     p = pool(probabilities_p, *args, **kwargs).to_numpy()
     q = pool(probabilities_q, *args, **kwargs).to_numpy()
-    MAE = numpy.mean(numpy.abs(p - q))
+    MAE = numpy.mean(numpy.abs(p - q)).item()
     return MAE
 
 def diffmap(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any):
@@ -254,28 +231,3 @@ def ctc_cvcBeamSearch_wrapper(model: PreTrainedModel, consonant_ids: list[int], 
             return {'logits': logits}
 
     return ModelWrapper(vowel_id2label)
-
-
-if __name__ == '__main__':
-    from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
-    from tokenizers import decoders
-    import torch
-    import json
-    model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2_ctc_1_timit')
-    processor = Wav2Vec2Processor.from_pretrained('../models/m_w2v2_ctc_1_timit')
-
-    with open('../models/m_w2v2_ctc_1_timit/vocab.json') as f:
-        label2id = json.load(f)
-
-    consonant_ids = [0, 3, 5, 7, 8, 10, 11, 12, 13, 15, 21, 22, 24, 25, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37, 38]
-    human_timit_vowels = {'i': 'iy', 'ɪ': 'ih', 'eɪ': 'ey', 'ɛ': 'eh', 'æ': 'ae', 'ɑ': 'aa', 'ʌ': 'ah', 'oʊ': 'ow', 'u': 'uw', 'ʊ': 'uh'}
-    vowel_id2label = {label2id[timit_vowel]: human_vowel for human_vowel, timit_vowel in human_timit_vowels.items()}
-    padding_token_id = 41
-
-    def pipe(n: int):
-        logits = model(torch.tensor([wv[i]['input_values'] for i in [n]])).logits.detach()
-        beams = ctc_beam_search_cvc(logits, consonant_ids, vowel_id2label, padding_token_id, beam_width=100)
-        return beams, wv[n]['vowel']
-        #pred_ids = torch.argmax(logits, dim=-1)
-        #output = processor.batch_decode(pred_ids)
-        #return logits, pred_ids, output

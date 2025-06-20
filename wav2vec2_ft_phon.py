@@ -43,6 +43,8 @@ timit_vowels = ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ay', 'ah', 'oy', 'ow', 'uh'
 possible_human_responses = sorted(list(set(human_responses['assimilation'])), key = lambda x: [vowel_order.index(c) for c in x])
 human_timit_vowels = {'i': 'iy', 'ɪ': 'ih', 'eɪ': 'ey', 'ɛ': 'eh', 'æ': 'ae', 'ɑ': 'aa', 'ʌ': 'ah', 'oʊ': 'ow', 'u': 'uw', 'ʊ': 'uh'}
 timit_human_vowels = {value: key for key, value in human_timit_vowels.items()}
+human_bl_vowels = {'i': 'i', 'y': 'y', 'e': 'e', 'ɛ': 'E', 'ø': 'deux', 'œ': 'neuf', 'a': 'a', 'ɑ̃': 'a~', 'o': 'o', 'ɔ': 'O', 'ɔ̃': 'o~', 'u': 'u', 'ɛ̃': 'U~'}
+bl_human_vowels = {value: key for key, value in human_bl_vowels.items()}
 
 # ctc classification model
 try:
@@ -81,8 +83,6 @@ except FileNotFoundError:
     p_humans_wv = world_vowel_sort(p_humans_wv)
     p_humans_wv.to_csv('probabilities/p_humans_wv.csv')
 
-human_bl_vowels = {'i': 'i', 'y': 'y', 'e': 'e', 'ɛ': 'E', 'ø': 'deux', 'œ': 'neuf', 'a': 'a', 'ɑ̃': 'a~', 'o': 'o', 'ɔ': 'O', 'ɔ̃': 'o~', 'u': 'u'} # TODO
-bl_human_vowels = {value: key for key, value in human_bl_vowels.items()}
 
 # french human responses
 try:
@@ -167,20 +167,38 @@ except FileNotFoundError:
     p_w2v2fr_ctc_1_bl_centreMeans_vowels_wv = world_vowel_sort(p_w2v2fr_ctc_1_bl_centreMeans_vowels_wv)
     p_w2v2fr_ctc_1_bl_centreMeans_vowels_wv.to_csv('probabilities/p_w2v2fr_ctc_1_bl_centreMeans_vowels_wv.csv')
 
-prev_phone = human_responses.set_index('filename')['prev_phone'].groupby('filename').first().rename_axis(index = 'file')
-next_phone = human_responses.set_index('filename')['next_phone'].groupby('filename').first().rename_axis(index = 'file')
+# French CTC CVC beam search
+try:
+    p_w2v2fr_ctc_1_bl_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2fr_ctc_1_bl_cvcBeamSearch_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2fr_ctc_1_bl')
+    with open('../models/m_w2v2fr_ctc_1_bl/vocab.json') as f:
+        vocab = json.load(f)
+    consonants = ['n', 'b', 'k', 's', 'Z', 'v', 'j', 'm', 'w', 'g', 't', 'R', 'l', 'd', 'S', 'N', 'z', 'p', 'f']
+    consonant_ids = [vocab[consonant] for consonant in consonants]
+    vowel_id2label = {v: bl_human_vowels[k] for k, v in vocab.items() if k in bl_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2fr_ctc_1_bl_cvcBeamSearch_vowels_wv = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2fr_ctc_1_bl_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2fr_ctc_1_bl_cvcBeamSearch_vowels_wv)
+    p_w2v2fr_ctc_1_bl_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2fr_ctc_1_bl_cvcBeamSearch_vowels_wv.csv')
 
-world_vowel_probabilities.insert(len(world_vowel_probabilities.columns), 'prev_phone', prev_phone.loc[world_vowel_probabilities['file']].reset_index()['prev_phone'])
-human_responses_pooled.insert(len(human_responses_pooled.columns), 'prev_phone', prev_phone.loc[human_responses_pooled['file']].reset_index()['prev_phone'])
-world_vowels_ctc.insert(len(world_vowels_ctc.columns), 'prev_phone', prev_phone.loc[world_vowels_ctc['file']].reset_index()['prev_phone'])
-world_vowel_probabilities.insert(len(world_vowel_probabilities.columns), 'next_phone', next_phone.loc[world_vowel_probabilities['file']].reset_index()['next_phone'])
-human_responses_pooled.insert(len(human_responses_pooled.columns), 'next_phone', next_phone.loc[human_responses_pooled['file']].reset_index()['next_phone'])
-world_vowels_ctc.insert(len(world_vowels_ctc.columns), 'next_phone', next_phone.loc[world_vowels_ctc['file']].reset_index()['next_phone'])
+# prev_phone = human_responses.set_index('filename')['prev_phone'].groupby('filename').first().rename_axis(index = 'file')
+# next_phone = human_responses.set_index('filename')['next_phone'].groupby('filename').first().rename_axis(index = 'file')
+
+# world_vowel_probabilities.insert(len(world_vowel_probabilities.columns), 'prev_phone', prev_phone.loc[world_vowel_probabilities['file']].reset_index()['prev_phone'])
+# human_responses_pooled.insert(len(human_responses_pooled.columns), 'prev_phone', prev_phone.loc[human_responses_pooled['file']].reset_index()['prev_phone'])
+# world_vowels_ctc.insert(len(world_vowels_ctc.columns), 'prev_phone', prev_phone.loc[world_vowels_ctc['file']].reset_index()['prev_phone'])
+# world_vowel_probabilities.insert(len(world_vowel_probabilities.columns), 'next_phone', next_phone.loc[world_vowel_probabilities['file']].reset_index()['next_phone'])
+# human_responses_pooled.insert(len(human_responses_pooled.columns), 'next_phone', next_phone.loc[human_responses_pooled['file']].reset_index()['next_phone'])
+# world_vowels_ctc.insert(len(world_vowels_ctc.columns), 'next_phone', next_phone.loc[world_vowels_ctc['file']].reset_index()['next_phone'])
 
 
-formants = pandas.read_csv('../stimuli_world_vowels/formants/world_vowels_formants.csv')
-formants = formants.set_index('file')
-heatmap([p_humans_wv, p_w2v2_ctc_1_timit_attn_class_3_wvEN_wv], 'vowel', language='EN')
+# formants = pandas.read_csv('../stimuli_world_vowels/formants/world_vowels_formants.csv')
+# formants = formants.set_index('file')
 # model_human_vowel_probabilities_formants = pool(world_vowels, human_timit_vowels, audio_files, 'file')
 # model_human_vowel_probabilities_formants = pandas.concat([model_human_vowel_probabilities_formants, formants], axis = 1)
 
