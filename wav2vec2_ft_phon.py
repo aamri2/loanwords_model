@@ -7,7 +7,7 @@ import json
 
 from transformers import Wav2Vec2ForCTC
 from model_architecture import Wav2Vec2WithAttentionClassifier, Wav2Vec2ForCTCWithAttentionClassifier
-from model_handler import heatmap, pool, feature_extractor, probabilities, audio_to_input_values, ctc_wrapper, ctc_cvcBeamSearch_wrapper
+from model_handler import heatmap, pool, mae, diffmap, feature_extractor, probabilities, audio_to_input_values, ctc_wrapper, ctc_cvcBeamSearch_wrapper
 
 human_responses = pandas.read_csv('../human_vowel_responses.csv')
 fr_human_responses = human_responses[human_responses['language_indiv'] == 'french'].rename(columns = {'#phone': 'phone'})
@@ -39,6 +39,11 @@ def world_vowel_sort(data: pandas.DataFrame):
 world_vowels = Dataset.from_dict({'audio': [f'../stimuli_world_vowels/{audio_file}.wav' for audio_file in audio_files], 'language': languages, 'vowel': vowels, 'file': audio_files}).cast_column('audio', Audio())
 world_vowels = audio_to_input_values(world_vowels, feature_extractor)
 
+timit_vowels = ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ay', 'ah', 'oy', 'ow', 'uh', 'uw', 'er', 'ix']
+possible_human_responses = sorted(list(set(human_responses['assimilation'])), key = lambda x: [vowel_order.index(c) for c in x])
+human_timit_vowels = {'i': 'iy', 'ɪ': 'ih', 'eɪ': 'ey', 'ɛ': 'eh', 'æ': 'ae', 'ɑ': 'aa', 'ʌ': 'ah', 'oʊ': 'ow', 'u': 'uw', 'ʊ': 'uh'}
+timit_human_vowels = {value: key for key, value in human_timit_vowels.items()}
+
 # ctc classification model
 try:
     p_w2v2_ctc_1_timit_attn_class_3_wvEN_wv = pandas.read_csv('probabilities/p_w2v2_ctc_1_timit_attn_class_3_wvEN_wv.csv')
@@ -66,11 +71,6 @@ except FileNotFoundError:
     p_w2v2_attn_class_2_timitMV_wv = probabilities(masked_classification_model, world_vowels)
     p_w2v2_attn_class_2_timitMV_wv = world_vowel_sort(p_w2v2_attn_class_2_timitMV_wv)
     p_w2v2_attn_class_2_timitMV_wv.to_csv('probabilities/p_w2v2_attn_class_2_timitMV_wv.csv')
-
-timit_vowels = ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ay', 'ah', 'oy', 'ow', 'uh', 'uw', 'er', 'ix']
-possible_human_responses = sorted(list(set(human_responses['assimilation'])), key = lambda x: [vowel_order.index(c) for c in x])
-human_timit_vowels = {'i': 'iy', 'ɪ': 'ih', 'eɪ': 'ey', 'ɛ': 'eh', 'æ': 'ae', 'ɑ': 'aa', 'ʌ': 'ah', 'oʊ': 'ow', 'u': 'uw', 'ʊ': 'uh'}
-timit_human_vowels = {value: key for key, value in human_timit_vowels.items()}
 
 # human responses
 try:
@@ -104,6 +104,37 @@ except FileNotFoundError:
     p_w2v2_ctc_1_timit_centreMeans_vowels_wv = probabilities(ctc_wrapper(ctc_model), world_vowels, id2label_ctc)
     p_w2v2_ctc_1_timit_centreMeans_vowels_wv = world_vowel_sort(p_w2v2_ctc_1_timit_centreMeans_vowels_wv)
     p_w2v2_ctc_1_timit_centreMeans_vowels_wv.to_csv('probabilities/p_w2v2_ctc_1_timit_centreMeans_vowels_wv.csv')
+
+# CTC centre probabilities fully frozen
+try:
+    p_w2v2_ctc_2_timit_centreMeans_vowels_wv = pandas.read_csv('probabilities/p_w2v2_ctc_2_timit_centreMeans_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model_frozen = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2_ctc_2_timit')
+    with open('../models/m_w2v2_ctc_2_timit/vocab.json') as f:
+        vocab = json.load(f)
+    id2label_ctc = {vocab[timit_vowel]: human_vowel for timit_vowel, human_vowel in timit_human_vowels.items()}
+    p_w2v2_ctc_2_timit_centreMeans_vowels_wv = probabilities(ctc_wrapper(ctc_model_frozen), world_vowels, id2label_ctc)
+    p_w2v2_ctc_2_timit_centreMeans_vowels_wv = world_vowel_sort(p_w2v2_ctc_2_timit_centreMeans_vowels_wv)
+    p_w2v2_ctc_2_timit_centreMeans_vowels_wv.to_csv('probabilities/p_w2v2_ctc_2_timit_centreMeans_vowels_wv.csv')
+
+# CTC CVC beam search fully frozen
+try:
+    p_w2v2_ctc_2_timit_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2_ctc_2_timit_cvcBeamSearch_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2_ctc_2_timit')
+    with open('../models/m_w2v2_ctc_2_timit/vocab.json') as f:
+        vocab = json.load(f)
+    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
+    consonant_ids = [vocab[consonant] for consonant in consonants]
+    vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2_ctc_2_timit_cvcBeamSearch_vowels_wv = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2_ctc_2_timit_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2_ctc_2_timit_cvcBeamSearch_vowels_wv)
+    p_w2v2_ctc_2_timit_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2_ctc_2_timit_cvcBeamSearch_vowels_wv.csv')
 
 # CTC CVC beam search
 try:
@@ -149,7 +180,7 @@ world_vowels_ctc.insert(len(world_vowels_ctc.columns), 'next_phone', next_phone.
 
 formants = pandas.read_csv('../stimuli_world_vowels/formants/world_vowels_formants.csv')
 formants = formants.set_index('file')
-
+heatmap([p_humans_wv, p_w2v2_ctc_1_timit_attn_class_3_wvEN_wv], 'vowel', language='EN')
 # model_human_vowel_probabilities_formants = pool(world_vowels, human_timit_vowels, audio_files, 'file')
 # model_human_vowel_probabilities_formants = pandas.concat([model_human_vowel_probabilities_formants, formants], axis = 1)
 

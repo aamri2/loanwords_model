@@ -1,4 +1,5 @@
 import pandas, numpy
+import seaborn.objects
 import torch
 import json
 from transformers import Wav2Vec2Config, AutoModel, PreTrainedModel, Wav2Vec2FeatureExtractor
@@ -129,6 +130,27 @@ def probabilities(model, dataset: Dataset, id2label = None, **kwargs):
             data[column_name].extend([row[column_name]] * len(probabilities))
     
     return pandas.DataFrame(data).astype({'probabilities': float})
+
+def mae(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any) -> float:
+    """Returns the mean absolute log error between the pooled probabilities."""
+
+    p = pool(probabilities_p, *args, **kwargs).to_numpy()
+    q = pool(probabilities_q, *args, **kwargs).to_numpy()
+    MAE = numpy.mean(numpy.abs(p - q))
+    return MAE
+
+def diffmap(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any):
+    """Displays a heatmap of the squared difference between the two probabilities."""
+
+    p = pool(probabilities_p, *args, **kwargs)
+    q = pool(probabilities_q, *args, **kwargs)
+    diff = p - q
+    diff = numpy.abs(diff)
+    seaborn.heatmap(diff, cmap = 'crest', square = True, vmax=1, vmin=0)
+    plt.text(0.8, 0.8, f'MAE: {mae(probabilities_p, probabilities_q)}')
+    plt.show()
+    
+
 
 def heatmap(probabilities: Union[pandas.DataFrame, list[pandas.DataFrame]], *args: str, **kwargs: Any):
     """Uses pool to create a seaborn heatmap."""
