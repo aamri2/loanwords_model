@@ -1,23 +1,23 @@
 import datasets
 import json
-from transformers import Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor, Wav2Vec2ForCTC, TrainingArguments, Trainer
+from transformers import Wav2Vec2PhonemeCTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor, Wav2Vec2ForCTC, TrainingArguments, Trainer
 import evaluate
 import torch
 import numpy
-from dataset_handler import prepare_bl_ctc
+from dataset_handler import prepare_librispeechFR_ctc
 from model_architecture import DataCollatorCTCWithPadding
 
 try:
-    bl_database = datasets.load_from_disk('../prepared_bl')
-    with open('vocab.json') as f:
+    librispeechFR = datasets.load_from_disk('../prep_librispeechFR')
+    with open('../prep_librispeechFR/vocab.json') as f:
         vocab_dict = json.load(f)
 except FileNotFoundError:
-    bl_database, vocab_dict = prepare_bl_ctc()
-    bl_database.save_to_disk('../prepared_bl')
-    with open('vocab.json', 'w') as f:
+    librispeechFR, vocab_dict = prepare_librispeechFR_ctc()
+    librispeechFR.save_to_disk('../prep_librispeechFR')
+    with open('../prep_librispeechFR/vocab.json', 'w') as f:
         json.dump(vocab_dict, f)
 
-tokenizer = Wav2Vec2CTCTokenizer('vocab.json')
+tokenizer = Wav2Vec2PhonemeCTCTokenizer('../prep_librispeechFR/vocab.json', do_phonemize=False)
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
@@ -37,7 +37,7 @@ def compute_metrics(pred):
 
 try:
     model = Wav2Vec2ForCTC.from_pretrained(
-        '../wav2vec2-base-fr',
+        '../w2v2fr',
         ctc_loss_reduction='mean',
         pad_token_id=processor.tokenizer.pad_token_id, # type: ignore # tokenizer exists
         vocab_size=len(vocab_dict)
@@ -49,7 +49,7 @@ except EnvironmentError:
         pad_token_id=processor.tokenizer.pad_token_id, # type: ignore # tokenizer exists
         vocab_size=len(vocab_dict)
     )
-    model.save_pretrained('../wav2vec2-base-fr')
+    model.save_pretrained('../w2v2fr')
 
 model.freeze_feature_encoder()
 
@@ -60,15 +60,15 @@ training_args = TrainingArguments(
     num_train_epochs=30,
     fp16=True,
     gradient_checkpointing=True,
-    save_steps=500,
-    eval_steps=500,
-    logging_steps=500,
+    save_steps=5000,
+    eval_steps=5000,
+    logging_steps=5000,
     learning_rate=1e-4,
     weight_decay=0.005,
-    warmup_steps=1000,
+    warmup_ratio=0.25,
     save_total_limit=2,
     push_to_hub=False,
-    output_dir='../trainer_output'
+    output_dir='../trainer_output_w2v2fr_ctc_1_librispeechFR'
 )
 
 trainer = Trainer(
@@ -76,8 +76,8 @@ trainer = Trainer(
     data_collator=data_collator,
     args=training_args,
     compute_metrics=compute_metrics,
-    train_dataset=bl_database['train'],
-    eval_dataset=bl_database['test'],
+    train_dataset=librispeechFR['train'],
+    eval_dataset=librispeechFR['dev'],
     processing_class=processor.feature_extractor, # type: ignore # feature_extractor exists
 )
 

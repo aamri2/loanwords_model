@@ -4,8 +4,11 @@ import json
 import pandas
 from typing import Optional, Union
 from collections.abc import Callable
+import phonemizer.separator
 import torch
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2CTCTokenizer, Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2PhonemeCTCTokenizer
+import phonemizer
+
 
 class PhoneDataset(Dataset):
     """Extends dataset with useful attributes and functions for phonetic or phonemic transcriptions."""
@@ -261,6 +264,67 @@ def prepare_masked_targets():
     masked_targets = masked_targets.class_encode_column('labels')
 
     return masked_targets
+
+def prepare_librispeechFR_ctc():
+    """
+    Prepares Multilingual LibriSpeech French for CTC training. Uses the first 10% of the train set
+    """
+
+    train = datasets.load_dataset('facebook/multilingual_librispeech', 'french', split='train[:10%]') # approx. 100 hours
+    test = datasets.load_dataset('facebook/multilingual_librispeech', 'french', split='test')
+    dev = datasets.load_dataset('facebook/multilingual_librispeech', 'french', split='dev')
+    librispeechFR = datasets.DatasetDict({
+        'train': train,
+        'test': test,
+        'dev': dev
+    })
+    librispeechFR = librispeechFR.remove_columns(
+        ['original_path', 'begin_time', 'end_time', 'audio_duration', 'speaker_id', 'chapter_id', 'file', 'id']
+    )
+
+    def phonemize(batch): # removes length distinction and lax high front vowel
+        text = batch['transcript']
+        separator = phonemizer.separator.Separator(word = '', phone = ' ')
+        batch['phone'] = [phone.replace('ː', '').replace('ɪ', 'i').split() for phone in phonemizer.phonemize(text, language = 'fr-fr', separator = separator)] # type: ignore # returns a string
+        return batch
+
+    librispeechFR = librispeechFR.map(phonemize, batched=True, remove_columns='transcript')
+    
+    def remove_language_switching(batch): # remove any utterances that contain non-french phonemizations
+        to_keep = [i for i, phone in enumerate(batch['phone']) if '(fr)' not in phone]
+        return {'to_keep': [to_keep]}
+    
+    to_keep = librispeechFR.map(remove_language_switching, batched=True, batch_size=-1, remove_columns=librispeechFR['train'].column_names)
+    for split in ['train', 'test', 'dev']:
+        librispeechFR[split] = librispeechFR[split].select(to_keep[split]['to_keep'][0])
+
+    def extract_phones(batch):
+        all_phones = sum(batch['phone'], [])
+        vocab = list(set(all_phones))
+        return {'vocab': [vocab], 'all_phones': [all_phones]}
+    
+    vocabs = librispeechFR.map(extract_phones, batched=True, batch_size=-1, remove_columns=librispeechFR['train'].column_names) # type: ignore
+    vocab_list = list(set(vocabs['train']['vocab'][0]) | set(vocabs['test']['vocab'][0]) | set(vocabs['dev']['vocab'][0])) # type: ignore
+    vocab_list.extend(['|', '<unk>', '<pad>'])
+    vocab_dict = {v: k for k, v in enumerate(vocab_list)}
+    with open('vocab.json', 'w') as f:
+        json.dump(vocab_dict, f)
+
+    tokenizer = Wav2Vec2PhonemeCTCTokenizer('vocab.json', do_phonemize=False)
+    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+    processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
+
+    def prepare_dataset(batch):
+        audio = batch['audio']
+        batch['input_values'] = processor(audio['array'], sampling_rate=audio['sampling_rate']).input_values[0]
+        with processor.as_target_processor():
+            batch['labels'] = processor(batch['phone'], is_split_into_words=True, add_special_tokens=False).input_ids
+        return batch
+
+    librispeechFR = librispeechFR.map(prepare_dataset, remove_columns=librispeechFR['train'].column_names)
+
+    return librispeechFR, vocab_dict
+
 
 # class DatasetLoader:
 #     """A wrapper for info needed to dynamically load and prepare a dataset or multiple datasets.
