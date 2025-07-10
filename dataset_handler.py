@@ -321,7 +321,7 @@ def prepare_librispeechFR_ctc():
             batch['labels'] = processor(batch['phone'], is_split_into_words=True, add_special_tokens=False).input_ids
         return batch
 
-    librispeechFR = librispeechFR.map(prepare_dataset, remove_columns=librispeechFR['train'].column_names)
+    librispeechFR = librispeechFR.map(prepare_dataset, batched=True, batch_size=250, remove_columns=librispeechFR['train'].column_names)
 
     return librispeechFR, vocab_dict
 

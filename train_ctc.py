@@ -35,21 +35,12 @@ def compute_metrics(pred):
     per = per_metric.compute(predictions=pred_str, references=label_str)
     return {'per': per}
 
-try:
-    model = Wav2Vec2ForCTC.from_pretrained(
-        '../w2v2fr',
-        ctc_loss_reduction='mean',
-        pad_token_id=processor.tokenizer.pad_token_id, # type: ignore # tokenizer exists
-        vocab_size=len(vocab_dict)
-    )
-except EnvironmentError:
-    model = Wav2Vec2ForCTC.from_pretrained(
-        'facebook/wav2vec2-base-fr-voxpopuli-v2',
-        ctc_loss_reduction='mean',
-        pad_token_id=processor.tokenizer.pad_token_id, # type: ignore # tokenizer exists
-        vocab_size=len(vocab_dict)
-    )
-    model.save_pretrained('../w2v2fr')
+model = Wav2Vec2ForCTC.from_pretrained(
+    '../w2v2fr',
+    ctc_loss_reduction='mean',
+    pad_token_id=processor.tokenizer.pad_token_id, # type: ignore # tokenizer exists
+    vocab_size=len(vocab_dict)
+)
 
 model.freeze_feature_encoder()
 
