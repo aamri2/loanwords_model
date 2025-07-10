@@ -188,8 +188,9 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
         super().__init__(config)
         
         self.wav2vec2 = Wav2Vec2Model(config)
-        self.config.use_all_hidden_states = use_all_hidden_states
-        if use_all_hidden_states:
+        if not hasattr(self.config, 'use_all_hidden_states'):
+            self.config.use_all_hidden_states = use_all_hidden_states
+        if self.config.use_all_hidden_states:
             hidden_size = config.hidden_size * config.num_hidden_layers + config.output_hidden_size
         else:
             hidden_size = config.output_hidden_size
