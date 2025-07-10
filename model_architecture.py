@@ -4,6 +4,7 @@ import torch
 from torch import nn
 from transformers import Wav2Vec2PreTrainedModel, Wav2Vec2Model, Wav2Vec2ForCTC, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
 from transformers.feature_extraction_utils import BatchFeature
+from transformers.modeling_outputs import CausalLMOutput
 from typing import Optional, Union, Any
 from dataclasses import dataclass
 
@@ -177,6 +178,113 @@ class Wav2Vec2ForCTCWithAttentionClassifier(Wav2Vec2ForCTC):
         
         return {'loss': loss, 'logits': logits} if loss is not None else {'logits': logits}
     
+_HIDDEN_STATES_START_POSITION = 2
+class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
+    """
+    Wav2Vec2ForCTC with a transformer encoder before the CTC layer.
+    """
+
+    def __init__(self, config, use_all_hidden_states=False):
+        super().__init__(config)
+        
+        self.wav2vec2 = Wav2Vec2Model(config)
+        self.config.use_all_hidden_states = use_all_hidden_states
+        if use_all_hidden_states:
+            hidden_size = config.hidden_size * config.num_hidden_layers + config.output_hidden_size
+        else:
+            hidden_size = config.output_hidden_size
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer=nn.TransformerEncoderLayer(d_model=hidden_size, nhead=8, dim_feedforward=hidden_size, batch_first=True),
+            num_layers=6
+        )
+        self.dropout = nn.Dropout(config.final_dropout)
+        output_hidden_size = hidden_size
+        self.lm_head = nn.Linear(output_hidden_size, config.vocab_size)
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def freeze_base_model(self): # freeze wav2vec2
+        """Freezes Wav2Vec2 and CTC layers, so only the attention and classifier get trained."""
+
+        for param in self.wav2vec2.parameters():
+            param.requires_grad = False
+
+    def forward(
+        self,
+        input_values: Optional[torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        labels: Optional[torch.Tensor] = None,
+    ):
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size, target_length)`, *optional*):
+            Labels for connectionist temporal classification. Note that `target_length` has to be smaller or equal to
+            the sequence length of the output logits. Indices are selected in `[-100, 0, ..., config.vocab_size - 1]`.
+            All labels set to `-100` are ignored (masked), the loss is only computed for labels in `[0, ...,
+            config.vocab_size - 1]`.
+        """
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        output_hidden_states = True if self.config.use_all_hidden_states else output_hidden_states # need hidden states for this
+
+        if labels is not None and labels.max() >= self.config.vocab_size:
+            raise ValueError(f"Label values must be <= vocab_size: {self.config.vocab_size}")
+
+        outputs = self.wav2vec2(
+            input_values,
+            attention_mask=attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        if self.config.use_all_hidden_states:
+            hidden_states = torch.concat(outputs[2], dim=2) # combine all hidden states as features
+        else:
+            hidden_states = outputs[0]
+        hidden_states = self.transformer(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+
+        logits = self.lm_head(hidden_states)
+
+        loss = None
+        if labels is not None:
+            # retrieve loss input_lengths from attention_mask
+            attention_mask = (
+                attention_mask if attention_mask is not None else torch.ones_like(input_values, dtype=torch.long)
+            )
+            input_lengths = self._get_feat_extract_output_lengths(attention_mask.sum(-1)).to(torch.long)
+
+            # assuming that padded tokens are filled with -100
+            # when not being attended to
+            labels_mask = labels >= 0
+            target_lengths = labels_mask.sum(-1)
+            flattened_targets = labels.masked_select(labels_mask)
+
+            # ctc_loss doesn't support fp16
+            log_probs = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).transpose(0, 1)
+
+            with torch.backends.cudnn.flags(enabled=False):
+                loss = nn.functional.ctc_loss(
+                    log_probs,
+                    flattened_targets,
+                    input_lengths,
+                    target_lengths,
+                    blank=self.config.pad_token_id,
+                    reduction=self.config.ctc_loss_reduction,
+                    zero_infinity=self.config.ctc_zero_infinity,
+                )
+
+            if not return_dict:
+                output = (logits,) + outputs[_HIDDEN_STATES_START_POSITION:]
+                return ((loss,) + output) if loss is not None else output
+
+            return CausalLMOutput(
+                loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions
+            )
+
 @dataclass
 class DataCollatorCTCWithPadding: # from https://huggingface.co/blog/fine-tune-wav2vec2-english
     """
