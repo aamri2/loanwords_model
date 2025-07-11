@@ -236,6 +236,25 @@ except FileNotFoundError:
     p_w2v2fr_ctc_1_bl_v2_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2fr_ctc_1_bl_v2_cvcBeamSearch_vowels_wv)
     p_w2v2fr_ctc_1_bl_v2_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2fr_ctc_1_bl_v2_cvcBeamSearch_vowels_wv.csv')
 
+# French Librispeech CTC CVC beam search
+try:
+    p_w2v2fr_ctc_1_librispeechFR_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2fr_ctc_1_librispeechFR_cvcBeamSearch_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2fr_ctc_1_librispeechFR')
+    with open('../models/m_w2v2fr_ctc_1_librispeechFR/vocab.json', encoding='utf-8') as f:
+        vocab = json.load(f)
+    consonants = ['b', 'd', 'dʒ', 'f', 'j', 'k', 'l', 'm', 'n', 'p', 's', 't', 'tʃ', 'v', 'w', 'z', 'ɡ', 'ɲ', 'ʁ', 'ʃ', 'ʒ']
+    consonant_ids = [vocab[consonant] for consonant in consonants]
+    vowel_id2label = {v: k for k, v in vocab.items() if k in human_bl_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2fr_ctc_1_librispeechFR_cvcBeamSearch_vowels_wv = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2fr_ctc_1_librispeechFR_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2fr_ctc_1_librispeechFR_cvcBeamSearch_vowels_wv)
+    p_w2v2fr_ctc_1_librispeechFR_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2fr_ctc_1_librispeechFR_cvcBeamSearch_vowels_wv.csv')
+
 # Transformer CTC beam search
 try:
     p_w2v2_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv.csv')
