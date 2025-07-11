@@ -43,7 +43,7 @@ except:
         ctc_loss_reduction='mean',
         pad_token_id=processor.tokenizer.pad_token_id, # type: ignore # tokenizer exists
         vocab_size=len(vocab_dict),
-        use_all_hidden_states=True
+        use_weighted_layer_sum=True
     )
     model.save_pretrained('../transformer_model_untrained_v2')
 
@@ -51,7 +51,7 @@ model.freeze_base_model()
 
 training_args = TrainingArguments(
     group_by_length=True,
-    per_device_train_batch_size=1,
+    per_device_train_batch_size=32,
     eval_strategy='steps',
     num_train_epochs=300,
     fp16=True,

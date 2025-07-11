@@ -184,23 +184,19 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
     Wav2Vec2ForCTC with a transformer encoder before the CTC layer.
     """
 
-    def __init__(self, config, use_all_hidden_states=False):
+    def __init__(self, config):
         super().__init__(config)
         
         self.wav2vec2 = Wav2Vec2Model(config)
-        if not hasattr(self.config, 'use_all_hidden_states'):
-            self.config.use_all_hidden_states = use_all_hidden_states
-        if self.config.use_all_hidden_states:
-            hidden_size = config.hidden_size * config.num_hidden_layers + config.output_hidden_size
-        else:
-            hidden_size = config.output_hidden_size
+        num_layers = config.num_hidden_layers + 1
+        if self.config.use_weighted_layer_sum:
+            self.hidden_layer_weights = nn.Parameter(torch.ones(num_layers) / num_layers)
         self.transformer = nn.TransformerEncoder(
-            encoder_layer=nn.TransformerEncoderLayer(d_model=hidden_size, nhead=8, dim_feedforward=hidden_size, batch_first=True),
+            encoder_layer=nn.TransformerEncoderLayer(d_model=config.output_hidden_size, nhead=8, dim_feedforward=config.output_hidden_size, batch_first=True),
             num_layers=6
         )
         self.dropout = nn.Dropout(config.final_dropout)
-        output_hidden_size = hidden_size
-        self.lm_head = nn.Linear(output_hidden_size, config.vocab_size)
+        self.lm_head = nn.Linear(config.output_hidden_size, config.vocab_size)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -228,7 +224,7 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
             config.vocab_size - 1]`.
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        output_hidden_states = True if self.config.use_all_hidden_states else output_hidden_states # need hidden states for this
+        output_hidden_states = True if self.config.use_weighted_layer_sum else output_hidden_states # need hidden states for this
 
         if labels is not None and labels.max() >= self.config.vocab_size:
             raise ValueError(f"Label values must be <= vocab_size: {self.config.vocab_size}")
@@ -241,10 +237,14 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
             return_dict=return_dict,
         )
 
-        if self.config.use_all_hidden_states:
-            hidden_states = torch.concat(outputs[2], dim=2) # combine all hidden states as features
+        if self.config.use_weighted_layer_sum:
+            hidden_states = outputs[_HIDDEN_STATES_START_POSITION]
+            hidden_states = torch.stack(hidden_states, dim=1)
+            norm_weights = nn.functional.softmax(self.hidden_layer_weights, dim=-1)
+            hidden_states = (hidden_states * norm_weights.view(-1, 1, 1)).sum(dim=1)
         else:
             hidden_states = outputs[0]
+        
         hidden_states = self.transformer(hidden_states)
         hidden_states = self.dropout(hidden_states)
 
@@ -278,13 +278,13 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
                     zero_infinity=self.config.ctc_zero_infinity,
                 )
 
-            if not return_dict:
-                output = (logits,) + outputs[_HIDDEN_STATES_START_POSITION:]
-                return ((loss,) + output) if loss is not None else output
+        if not return_dict:
+            output = (logits,) + outputs[_HIDDEN_STATES_START_POSITION:]
+            return ((loss,) + output) if loss is not None else output
 
-            return CausalLMOutput(
-                loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions
-            )
+        return CausalLMOutput(
+            loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions
+        )
 
 @dataclass
 class DataCollatorCTCWithPadding: # from https://huggingface.co/blog/fine-tune-wav2vec2-english
