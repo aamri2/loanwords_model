@@ -70,7 +70,7 @@ American English speakers assimilate Parisian French vowels in a carrier phrase 
         - largely /ʲu/ for both, more in bilabial context
         - occasionally /u/, more often in alveolar context especially for less experienced groups
         - ModExp assimilates to /ʲu/ in a bilabial context more often than NoExp, HiExp
-        - no experience effect in alveolar context
+        - more experience leads to more /u/ classifications with experience in bilabial context, no experience effect in alveolar context
         - assimilations to /i/ were largely driven by one person in NoExp, who responded /i/ every time in the bilabial context and never in the alveolar context
         - still very rarely assimilated to /i/ by NoExp and ModExp
         - more consistent in HiExp than in ModExp or NoExp, not conditioned by context
@@ -82,3 +82,22 @@ American English speakers assimilate Parisian French vowels in a carrier phrase 
         - occasionally /o/, decreases with experience in bilabial context, ModExp > NoExp > HiExp in alveolar context, less often in bilabial context
         - sometimes /ɜ˞/ in HiExp only
         - much more consistent in HiExp than in NoExp or ModExp
+
+## Discussion
+
+- Levy suggests that by HiExp, had settled on categories for front round vowels
+    - **Prediction**: There should be a point in model FT where a clear winner emerges
+- Levy suggests a "learned helplessness" in /u-y/ discrimination in alveolar contexts, i.e. the learners essentially give up on trying to learn the difference once they have enough exposure, characterized by lack of overall increase in /ʲu/ with experience
+- Levy suggests that the difference in representation of /œ/ in MidExp and HiExp comes from classroom vs immersion experience
+    - No real analogue in our method; all experience is immersion experience
+    - **Prediction**: If it is a matter of type of experience, we shouldn't see any analogue to the peculiarities of the MidExp group in our results, but rather a smooth progression from NoExp to HiExp
+- Levy suggests context effect of /ʲu/ might have to do with American English frequency; /tʲu/ has lost its glide in most American dialects
+    - **Prediction**: If it is entirely a phonotactics issue, we should not see a context effect as CTC predictions are temporally independent. If it is an acoustic matter, we should see a difference
+- **Interesting and testable findings**:
+    - /ɛ/ is classified occasionally as /æ/ only without exposure, while its classification as /e/ doesn't change
+    - /o/ is classified less and less as /u/ with exposure; /u/ classification is initially favoured over /o/
+        - Context only matters to naive listeners
+    - /œ/ is mostly classified as /ʊ/, less and less /u/ with experience and at some point /ɜ˞/ emerges as a classification
+    - /y/ is mostly classified as /ʲu/ or /u/, more the former in bilabial contexts
+        - /i/ classification is extremely rare and idiosyncratic
+        - More /u/ classification with experience, but /ʲu/ classification doesn't change much overall
