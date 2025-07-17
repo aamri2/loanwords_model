@@ -25,15 +25,18 @@ data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
 per_metric = evaluate.load('../metrics/cer')
 
 def compute_metrics(pred):
-    pred_logits = pred.predictions
-    pred_ids = numpy.argmax(pred_logits, axis=-1)
-
+    pred_ids = pred.predictions
     pred.label_ids[pred.label_ids == -100] = processor.tokenizer.pad_token_id # type: ignore # tokenizer exists
     pred_str = processor.batch_decode(pred_ids)
     label_str = processor.batch_decode(pred.label_ids, group_tokens=False)
 
     per = per_metric.compute(predictions=pred_str, references=label_str)
     return {'per': per}
+
+def preprocess_logits_for_metrics(logits, labels):
+    if isinstance(logits, tuple):
+        logits = logits[0]
+    return numpy.argmax(logits, axis=-1)
 
 try:
     model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../transformer_model_untrained_v2')
@@ -72,6 +75,7 @@ trainer = Trainer(
     data_collator=data_collator,
     args=training_args,
     compute_metrics=compute_metrics,
+    preprocess_logits_for_metrics=preprocess_logits_for_metrics,
     train_dataset=timit['train'],
     eval_dataset=timit['test'],
     processing_class=processor.feature_extractor, # type: ignore # feature_extractor exists
