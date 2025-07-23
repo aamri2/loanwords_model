@@ -8,6 +8,9 @@ import phonemizer.separator
 import torch
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2CTCTokenizer, Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2PhonemeCTCTokenizer
 import phonemizer
+from pyacoustics.speech_filters import speech_shaped_noise
+import numpy as np
+from torchaudio.functional import forced_align, merge_tokens
 
 
 class PhoneDataset(Dataset):
@@ -17,6 +20,43 @@ class PhoneDataset(Dataset):
         super().__init__(*args, **kwargs)
 
     # TODO
+
+
+def make_noisy(dataset, snr):
+    """Takes a prepared dataset and returns it with noise added."""
+
+    def add_noise(batch):
+        audios = [np.array(input_values) for input_values in batch['input_values']]
+        all_audio = np.hstack(audios)
+        noise = speech_shaped_noise._noise_from_signal(all_audio)
+        for i, audio in enumerate(audios):
+            level = speech_shaped_noise._dbspl(audio)
+            audios[i] = speech_shaped_noise._mix_noise(audio, noise, level, snr)[1].tolist()
+        return {'input_values': audios}
+    
+    dataset = dataset.map(add_noise, batched=True, batch_size=64)
+    return dataset
+
+def align_ctc(dataset, model):
+    """
+    Given a prepared dataset and a CTC model trained on that dataset, gives alignments.
+    
+    Alignments are given in the columns "start" and "end" of the returned dataset.
+    """
+
+    def get_alignments(batch):
+        input_values = torch.tensor([batch['input_values']])
+        log_probs = model(input_values).logits
+        targets = torch.tensor([batch['labels']])
+        tokens, scores = forced_align(log_probs, targets, blank=model.config.pad_token_id)
+        merged_tokens = merge_tokens(tokens[0], scores[0])
+        start, end = zip(*[(token_span.start, token_span.end) for token_span in merge_tokens(tokens[0], scores[0])])
+        batch['start'] = [start]
+        batch['end'] = [end]
+        return batch
+
+    dataset = dataset.map(get_alignments)
+    return dataset
 
 
 def throughPretrainedModel(dataset, model):
