@@ -1,4 +1,4 @@
-# Levy (2008) notes
+# Levy (2009) notes
 
 American English speakers assimilate Parisian French vowels in a carrier phrase and carrier word. Familiarity and consonantal context vary.
 
@@ -44,7 +44,7 @@ American English speakers assimilate Parisian French vowels in a carrier phrase 
 
 - Language experience effects for some comparisons on all vowels except /i/ and /u/ (assimilated as /i/ and /u/ respectively)
     - More consistent responses in HiExp than in other groups
-- Context effects for /a, y, o, œ/, not for /i, ɛ, u/
+- Context effects for /a, (y), o, œ/, not for /i, ɛ, u/
     - More consistent responses in bilabial than alveolar context
 - Some vowels were assimilated less consistently than others (e.g. /i/ > /y/ > /œ/)
 - Front round vowels were overwhelmingly assimilated to back vowels (including /ʲu/)
@@ -96,8 +96,10 @@ American English speakers assimilate Parisian French vowels in a carrier phrase 
 - **Interesting and testable findings**:
     - /ɛ/ is classified occasionally as /æ/ only without exposure, while its classification as /e/ doesn't change
     - /o/ is classified less and less as /u/ with exposure; /u/ classification is initially favoured over /o/
-        - Context only matters to naive listeners
+        - (how did they discriminate?)
+        - Context only matters to naive listeners: bilabial + naive = /u/
     - /œ/ is mostly classified as /ʊ/, less and less /u/ with experience and at some point /ɜ˞/ emerges as a classification
+        - (where did the /u/ come from? stimuli might have been pronounced higher)
     - /y/ is mostly classified as /ʲu/ or /u/, more the former in bilabial contexts
         - /i/ classification is extremely rare and idiosyncratic
         - More /u/ classification with experience, but /ʲu/ classification doesn't change much overall
