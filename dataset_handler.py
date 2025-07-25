@@ -51,13 +51,83 @@ def align_ctc(dataset, model):
         tokens, scores = forced_align(log_probs, targets, blank=model.config.pad_token_id)
         merged_tokens = merge_tokens(tokens[0], scores[0])
         start, end = zip(*[(token_span.start, token_span.end) for token_span in merge_tokens(tokens[0], scores[0])])
-        batch['start'] = [start]
-        batch['end'] = [end]
+        batch['start'] = start
+        batch['end'] = end
         return batch
 
     dataset = dataset.map(get_alignments)
     return dataset
 
+def random_substrings(aligned_dataset, samples_to_frames_ratio, substring_length = None, substring_ratio = 0.3):
+    """
+    Takes a prepared dataset with alignments and returns randomly selected substrings.
+
+    Args:
+        aligned_dataset: A prepared dataset with additional
+            columns 'start' and 'end' containing frame-alignments.
+        samples_to_frames_ratio: The number of samples per frame, where alignment
+            is at the frame-level.
+        substring_length: Takes precedence over 'substring_ratio'. The length
+            of the desired substrings, expressed in number of tokens.
+        substring_ratio: The length of the desired substrings, expressed
+            as a ratio of the total number of tokens.
+    """
+
+    def use_substring_length(string_length):
+        return torch.tensor([substring_length]).int()
+
+    def use_substring_ratio(string_length):
+        rounding = torch.randint(0, 2, (1,))
+        return torch.tensor([string_length * substring_ratio]).int() + rounding
+    
+    get_substring_length = use_substring_length if substring_length else use_substring_ratio
+
+    def get_substrings(batch):
+        n_tokens = get_substring_length(len(batch['labels']))
+        start_token = torch.randint(1, len(batch['labels']) - n_tokens, (1,))
+        end_token = start_token + n_tokens
+        # substring is taken from end of previous token to start of following token
+        start_frame = batch['end'][start_token - 1]
+        end_frame = batch['start'][end_token]
+        audio_substring = batch['input_values'][(np.floor(start_frame * samples_to_frames_ratio - 1).astype('int')):(np.ceil(end_frame * samples_to_frames_ratio).astype('int'))]
+        labels_substring = batch['labels'][start_token:end_token]
+        batch['input_values'] = audio_substring
+        batch['labels'] = labels_substring
+        return batch
+    
+    aligned_dataset = aligned_dataset.map(get_substrings, remove_columns = ['start', 'end'])
+    return aligned_dataset
+
+def noisy_and_substrings(aligned_dataset, snr, samples_to_frames_ratio, substring_length = None, substring_ratio = 0.3, noisy_ratio = 0.5, substring_subset_ratio = 0.5):
+    """Helper function makes noisy and substring split of aligned dataset."""
+
+    if isinstance(aligned_dataset, DatasetDict):
+        new_dataset = DatasetDict()
+        for key, dataset in aligned_dataset.items():
+            new_dataset[key] = noisy_and_substrings(dataset, snr, samples_to_frames_ratio, substring_length, substring_ratio, noisy_ratio, substring_ratio)
+        return new_dataset
+    
+    random_indices = np.random.choice(range(len(aligned_dataset)), size=(len(aligned_dataset,)), replace=False)
+
+    # make noisy subset
+    noisy_dataset = make_noisy(
+        aligned_dataset.select(random_indices[:int(noisy_ratio*len(aligned_dataset))]), snr
+    )
+    clean_dataset = aligned_dataset.select(random_indices[int(noisy_ratio*len(aligned_dataset)):])
+
+    # make substring subsets
+    noisy_substring_dataset = random_substrings(
+        noisy_dataset.select(range(int(substring_subset_ratio*len(noisy_dataset)))), samples_to_frames_ratio, substring_length, substring_ratio
+    )
+    noisy_string_dataset = noisy_dataset.select(range(int(substring_subset_ratio*len(noisy_dataset)), len(noisy_dataset))).remove_columns(['start', 'end'])
+    clean_substring_dataset = random_substrings(
+        clean_dataset.select(range(int(substring_subset_ratio*len(clean_dataset)))), samples_to_frames_ratio, substring_length, substring_ratio
+    )
+    clean_string_dataset = clean_dataset.select(range(int(substring_subset_ratio*len(clean_dataset)), len(clean_dataset))).remove_columns(['start', 'end'])
+
+    new_dataset = datasets.concatenate_datasets([noisy_substring_dataset, noisy_string_dataset, clean_substring_dataset, clean_string_dataset])
+    new_dataset = new_dataset.shuffle().flatten_indices()
+    return new_dataset
 
 def throughPretrainedModel(dataset, model):
     """Runs a prepared dataset through a given base model."""
@@ -146,14 +216,21 @@ def prepare_timit_ctc(): #TODO: return
 
     return timit
 
-def prepare_bl_ctc() -> tuple[datasets.DatasetDict, dict[str, int]]:
-    """Prepares BL-Database and vocab_dict for CTC training."""
+def prepare_bl_ctc(aligned = False) -> tuple[datasets.DatasetDict, dict[str, int]]:
+    """
+    Prepares BL-Database and vocab_dict for CTC training.
+    
+    Returns an aligned dataset if 'aligned' is set to True.
+    """
     bl = load_dataset('../BL-Database/dataset')
     bl = bl['train'].train_test_split() # type: ignore # known to be DatasetDict
     bl = bl.cast_column('audio', datasets.Audio(sampling_rate=16000))
 
     def extract_utterances(batch):
         batch['phone'] = batch['phonetic_transcription']['phone']
+        if aligned:
+            batch['start'] = batch['phonetic_transcription']['start']
+            batch['end'] = batch['phonetic_transcription']['stop']
         return batch
 
     bl = bl.map(extract_utterances, remove_columns=['phonetic_transcription'])
@@ -178,11 +255,10 @@ def prepare_bl_ctc() -> tuple[datasets.DatasetDict, dict[str, int]]:
     def prepare_dataset(batch):
         audio = batch['audio']
         batch['input_values'] = processor(audio['array'], sampling_rate=audio['sampling_rate']).input_values[0]
-        with processor.as_target_processor():
-            batch['labels'] = processor(batch['phone'], is_split_into_words=True, add_special_tokens=False).input_ids
+        batch['labels'] = processor(text=batch['phone'], is_split_into_words=True, add_special_tokens=False).input_ids
         return batch
     
-    bl = bl.map(prepare_dataset, remove_columns=bl['train'].column_names)
+    bl = bl.map(prepare_dataset, remove_columns=['phone', 'audio'])
     return bl, vocab_dict
 
 def prepare_targets():
