@@ -43,8 +43,10 @@ timit_vowels = ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ay', 'ah', 'oy', 'ow', 'uh'
 possible_human_responses = sorted(list(set(human_responses['assimilation'])), key = lambda x: [vowel_order.index(c) for c in x])
 human_timit_vowels = {'i': 'iy', 'ɪ': 'ih', 'eɪ': 'ey', 'ɛ': 'eh', 'æ': 'ae', 'ɑ': 'aa', 'ʌ': 'ah', 'oʊ': 'ow', 'u': 'uw', 'ʊ': 'uh'}
 timit_human_vowels = {value: key for key, value in human_timit_vowels.items()}
-human_bl_vowels = {'i': 'i', 'y': 'y', 'e': 'e', 'ɛ': 'E', 'ø': 'deux', 'œ': 'neuf', 'a': 'a', 'ɑ̃': 'a~', 'o': 'o', 'ɔ': 'O', 'ɔ̃': 'o~', 'u': 'u', 'ɛ̃': 'U~'}
+with open('human_bl_vowels.json') as f:
+    human_bl_vowels = json.load(f)
 bl_human_vowels = {value: key for key, value in human_bl_vowels.items()}
+bl_consonants = ['n', 'b', 'k', 's', 'Z', 'v', 'j', 'm', 'w', 'g', 't', 'R', 'l', 'd', 'S', 'N', 'z', 'p', 'f']
 
 # ctc classification model
 try:
@@ -224,8 +226,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2fr_ctc_1_blNS')
     with open('../models/m_w2v2fr_ctc_1_blNS/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['n', 'b', 'k', 's', 'Z', 'v', 'j', 'm', 'w', 'g', 't', 'R', 'l', 'd', 'S', 'N', 'z', 'p', 'f']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in bl_consonants]
     vowel_id2label = {v: bl_human_vowels[k] for k, v in vocab.items() if k in bl_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
@@ -243,8 +244,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2fr_ctc_1_bl_v2')
     with open('../models/m_w2v2fr_ctc_1_bl_v2/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['n', 'b', 'k', 's', 'Z', 'v', 'j', 'm', 'w', 'g', 't', 'R', 'l', 'd', 'S', 'N', 'z', 'p', 'f']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in bl_consonants]
     vowel_id2label = {v: bl_human_vowels[k] for k, v in vocab.items() if k in bl_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
