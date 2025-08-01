@@ -98,7 +98,7 @@ American English speakers assimilate Parisian French vowels in a carrier phrase 
     - /o/ is classified less and less as /u/ with exposure; /u/ classification is initially favoured over /o/
         - (how did they discriminate?)
         - Context only matters to naive listeners: bilabial + naive = /u/
-    - /œ/ is mostly classified as /ʊ/, less and less /u/ with experience and at some point /ɜ˞/ emerges as a classification
+    - /œ (ø)/ is mostly classified as /ʊ/, less and less /u/ with experience and at some point /ɜ˞/ emerges as a classification
         - (where did the /u/ come from? stimuli might have been pronounced higher)
     - /y/ is mostly classified as /ʲu/ or /u/, more the former in bilabial contexts
         - /i/ classification is extremely rare and idiosyncratic
