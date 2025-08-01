@@ -236,6 +236,96 @@ except FileNotFoundError:
     p_w2v2fr_ctc_1_blNS_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2fr_ctc_1_blNS_cvcBeamSearch_vowels_wv)
     p_w2v2fr_ctc_1_blNS_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2fr_ctc_1_blNS_cvcBeamSearch_vowels_wv.csv')
 
+# French BL noisy+substrings v2 CTC CVC beam search
+try:
+    p_w2v2fr_ctc_1_blNS_v2_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2fr_ctc_1_blNS_v2_cvcBeamSearch_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2fr_ctc_1_blNS_v2')
+    with open('../models/m_w2v2fr_ctc_1_blNS_v2/vocab.json') as f:
+        vocab = json.load(f)
+    consonant_ids = [vocab[consonant] for consonant in bl_consonants]
+    vowel_id2label = {v: bl_human_vowels[k] for k, v in vocab.items() if k in bl_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2fr_ctc_1_blNS_v2_cvcBeamSearch_vowels_wv = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2fr_ctc_1_blNS_v2_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2fr_ctc_1_blNS_v2_cvcBeamSearch_vowels_wv)
+    p_w2v2fr_ctc_1_blNS_v2_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2fr_ctc_1_blNS_v2_cvcBeamSearch_vowels_wv.csv')
+
+# French BL substrings CTC CVC beam search
+try:
+    p_w2v2fr_ctc_1_blS_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2fr_ctc_1_blS_cvcBeamSearch_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2fr_ctc_1_blS')
+    with open('../models/m_w2v2fr_ctc_1_blS/vocab.json') as f:
+        vocab = json.load(f)
+    consonant_ids = [vocab[consonant] for consonant in bl_consonants]
+    vowel_id2label = {v: bl_human_vowels[k] for k, v in vocab.items() if k in bl_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2fr_ctc_1_blS_cvcBeamSearch_vowels_wv = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2fr_ctc_1_blS_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2fr_ctc_1_blS_cvcBeamSearch_vowels_wv)
+    p_w2v2fr_ctc_1_blS_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2fr_ctc_1_blS_cvcBeamSearch_vowels_wv.csv')
+
+# French BL noisy CTC CVC beam search
+try:
+    p_w2v2fr_ctc_1_blN_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2fr_ctc_1_blN_cvcBeamSearch_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2fr_ctc_1_blN')
+    with open('../models/m_w2v2fr_ctc_1_blN/vocab.json') as f:
+        vocab = json.load(f)
+    consonant_ids = [vocab[consonant] for consonant in bl_consonants]
+    vowel_id2label = {v: bl_human_vowels[k] for k, v in vocab.items() if k in bl_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2fr_ctc_1_blN_cvcBeamSearch_vowels_wv = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2fr_ctc_1_blN_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2fr_ctc_1_blN_cvcBeamSearch_vowels_wv)
+    p_w2v2fr_ctc_1_blN_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2fr_ctc_1_blN_cvcBeamSearch_vowels_wv.csv')
+
+# French BL substrings v2 CTC CVC beam search
+try:
+    p_w2v2fr_ctc_1_blS_v2_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2fr_ctc_1_blS_v2_cvcBeamSearch_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2fr_ctc_1_blS_v2')
+    with open('../models/m_w2v2fr_ctc_1_blS_v2/vocab.json') as f:
+        vocab = json.load(f)
+    consonant_ids = [vocab[consonant] for consonant in bl_consonants]
+    vowel_id2label = {v: bl_human_vowels[k] for k, v in vocab.items() if k in bl_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2fr_ctc_1_blS_v2_cvcBeamSearch_vowels_wv = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2fr_ctc_1_blS_v2_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2fr_ctc_1_blS_v2_cvcBeamSearch_vowels_wv)
+    p_w2v2fr_ctc_1_blS_v2_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2fr_ctc_1_blS_v2_cvcBeamSearch_vowels_wv.csv')
+
+# French BL noisy v2 CTC CVC beam search
+try:
+    p_w2v2fr_ctc_1_blN_v2_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2fr_ctc_1_blN_v2_cvcBeamSearch_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2fr_ctc_1_blN_v2')
+    with open('../models/m_w2v2fr_ctc_1_blN_v2/vocab.json') as f:
+        vocab = json.load(f)
+    consonant_ids = [vocab[consonant] for consonant in bl_consonants]
+    vowel_id2label = {v: bl_human_vowels[k] for k, v in vocab.items() if k in bl_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2fr_ctc_1_blN_v2_cvcBeamSearch_vowels_wv = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2fr_ctc_1_blN_v2_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2fr_ctc_1_blN_v2_cvcBeamSearch_vowels_wv)
+    p_w2v2fr_ctc_1_blN_v2_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2fr_ctc_1_blN_v2_cvcBeamSearch_vowels_wv.csv')
+
 # French v2 CTC CVC beam search
 try:
     p_w2v2fr_ctc_1_bl_v2_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2fr_ctc_1_bl_v2_cvcBeamSearch_vowels_wv.csv')
@@ -311,6 +401,100 @@ except FileNotFoundError:
     )
     p_w2v2_transformer_ctc_2_timit_v2_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2_transformer_ctc_2_timit_v2_cvcBeamSearch_vowels_wv)
     p_w2v2_transformer_ctc_2_timit_v2_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2_transformer_ctc_2_timit_v2_cvcBeamSearch_vowels_wv.csv')
+
+# Transformer CTC beam search timit substrings 185 epochs
+try:
+    p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_185e = pandas.read_csv('probabilities/p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_185e.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_timitS_185e')
+    with open('../models/m_w2v2_transformer_ctc_2_timitS_185e/vocab.json') as f:
+        vocab = json.load(f)
+    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
+    consonant_ids = [vocab[consonant] for consonant in consonants]
+    vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_185e = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_185e = world_vowel_sort(p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_185e)
+    p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_185e.to_csv('probabilities/p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_185e.csv')
+
+# Transformer CTC beam search timit substrings load best model
+try:
+    p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_best = pandas.read_csv('probabilities/p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_best.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_timitS_best')
+    with open('../models/m_w2v2_transformer_ctc_2_timitS_best/vocab.json') as f:
+        vocab = json.load(f)
+    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
+    consonant_ids = [vocab[consonant] for consonant in consonants]
+    vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_best = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_best = world_vowel_sort(p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_best)
+    p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_best.to_csv('probabilities/p_w2v2_transformer_ctc_2_timitS_cvcBeamSearch_vowels_wv_best.csv')
+
+# Transformer CTC beam search timit load best model
+try:
+    p_w2v2_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv_best = pandas.read_csv('probabilities/p_w2v2_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv_best.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_timit_best')
+    with open('../models/m_w2v2_transformer_ctc_2_timit_best/vocab.json') as f:
+        vocab = json.load(f)
+    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
+    consonant_ids = [vocab[consonant] for consonant in consonants]
+    vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv_best = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv_best = world_vowel_sort(p_w2v2_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv_best)
+    p_w2v2_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv_best.to_csv('probabilities/p_w2v2_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv_best.csv')
+
+# Transformer CTC beam search french base
+try:
+    p_w2v2fr_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2fr_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2fr_transformer_ctc_2_timit')
+    with open('../models/m_w2v2fr_transformer_ctc_2_timit/vocab.json') as f:
+        vocab = json.load(f)
+    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
+    consonant_ids = [vocab[consonant] for consonant in consonants]
+    vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2fr_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2fr_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2fr_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv)
+    p_w2v2fr_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2fr_transformer_ctc_2_timit_cvcBeamSearch_vowels_wv.csv')
+
+# French transformer substring BL CTC beam search
+try:
+    p_w2v2fr_transformer_ctc_2_blS_cvcBeamSearch_vowels_wv = pandas.read_csv('probabilities/p_w2v2fr_transformer_ctc_2_blS_cvcBeamSearch_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2fr_transformer_ctc_2_blS')
+    with open('../models/m_w2v2fr_transformer_ctc_2_blS/vocab.json') as f:
+        vocab = json.load(f)
+    consonant_ids = [vocab[consonant] for consonant in bl_consonants]
+    vowel_id2label = {v: bl_human_vowels[k] for k, v in vocab.items() if k in bl_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2fr_transformer_ctc_2_blS_cvcBeamSearch_vowels_wv = probabilities(
+        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2fr_transformer_ctc_2_blS_cvcBeamSearch_vowels_wv = world_vowel_sort(p_w2v2fr_transformer_ctc_2_blS_cvcBeamSearch_vowels_wv)
+    p_w2v2fr_transformer_ctc_2_blS_cvcBeamSearch_vowels_wv.to_csv('probabilities/p_w2v2fr_transformer_ctc_2_blS_cvcBeamSearch_vowels_wv.csv')
 
 # prev_phone = human_responses.set_index('filename')['prev_phone'].groupby('filename').first().rename_axis(index = 'file')
 # next_phone = human_responses.set_index('filename')['next_phone'].groupby('filename').first().rename_axis(index = 'file')
