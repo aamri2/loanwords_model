@@ -207,8 +207,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2fr_ctc_1_bl')
     with open('../models/m_w2v2fr_ctc_1_bl/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['n', 'b', 'k', 's', 'Z', 'v', 'j', 'm', 'w', 'g', 't', 'R', 'l', 'd', 'S', 'N', 'z', 'p', 'f']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in bl_consonants]
     vowel_id2label = {v: bl_human_vowels[k] for k, v in vocab.items() if k in bl_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
