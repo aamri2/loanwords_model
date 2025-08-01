@@ -185,13 +185,19 @@ def prepare_wvEN():
 
 
 
-def prepare_timit_ctc(): #TODO: return
+def prepare_timit_ctc(aligned = False):
     """Prepares TIMIT for CTC sequence classification."""
     timit = load_dataset('timit_asr', data_dir='../timit/TIMIT')
     timit = timit.remove_columns(['file', 'text', 'word_detail', 'dialect_region', 'sentence_type', 'speaker_id', 'id'])
+    
+    timit_folding = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er', 'hv': 'hh', 'ix': 'ih', 'el': 'l', 'em': 'm', 'en': 'n', 'nx': 'n', 'eng': 'ng', 'ux': 'uw'} # did not merge zh/sh
+    timit_remove = ['tcl', 'gcl', 'kcl', 'bcl', 'epi', 'h#', 'dcl', 'q', 'pcl', 'pau']
 
     def extract_utterances(batch):
-        batch['utterance'] = batch['phonetic_detail']['utterance']
+        batch['utterance'] = [timit_folding.get(phone, phone) for phone in batch['phonetic_detail']['utterance'] if phone not in timit_remove]
+        if aligned:
+            batch['start'] = batch['phonetic_detail']['start']
+            batch['end'] = batch['phonetic_detail']['stop']
         return batch
 
     timit = timit.map(extract_utterances, remove_columns=['phonetic_detail'])
@@ -209,7 +215,7 @@ def prepare_timit_ctc(): #TODO: return
     with open('vocab.json', 'w') as f:
         json.dump(vocab_dict, f)
 
-    tokenizer = Wav2Vec2PhonemeCTCTokenizer(f'{model_dir}/{model}/vocab.json')
+    tokenizer = Wav2Vec2PhonemeCTCTokenizer('vocab.json')
     feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
     processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
@@ -219,9 +225,9 @@ def prepare_timit_ctc(): #TODO: return
         batch['labels'] = [vocab_dict[phone] for phone in batch['utterance']]
         return batch
 
-    timit = timit.map(prepare_dataset, remove_columns=timit.column_names['train'])
+    timit = timit.map(prepare_dataset, remove_columns=['audio', 'utterance'])
 
-    return timit
+    return timit, vocab_dict
 
 def prepare_bl_ctc(aligned = False) -> tuple[datasets.DatasetDict, dict[str, int]]:
     """
