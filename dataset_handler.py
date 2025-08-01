@@ -104,25 +104,32 @@ def noisy_and_substrings(aligned_dataset, snr, samples_to_frames_ratio, substrin
     if isinstance(aligned_dataset, DatasetDict):
         new_dataset = DatasetDict()
         for key, dataset in aligned_dataset.items():
-            new_dataset[key] = noisy_and_substrings(dataset, snr, samples_to_frames_ratio, substring_length, substring_ratio, noisy_ratio, substring_ratio)
+            new_dataset[key] = noisy_and_substrings(dataset, snr, samples_to_frames_ratio, substring_length, substring_ratio, noisy_ratio, substring_subset_ratio)
         return new_dataset
     
     random_indices = np.random.choice(range(len(aligned_dataset)), size=(len(aligned_dataset,)), replace=False)
 
     # make noisy subset
-    noisy_dataset = make_noisy(
-        aligned_dataset.select(random_indices[:int(noisy_ratio*len(aligned_dataset))]), snr
-    )
+    if noisy_ratio > 0:
+        noisy_dataset = make_noisy(
+            aligned_dataset.select(random_indices[:int(noisy_ratio*len(aligned_dataset))]), snr
+        )
+    else:
+        noisy_dataset = Dataset.from_dict({'input_values': [], 'labels': [], 'start': [], 'end': []})
     clean_dataset = aligned_dataset.select(random_indices[int(noisy_ratio*len(aligned_dataset)):])
 
     # make substring subsets
-    noisy_substring_dataset = random_substrings(
-        noisy_dataset.select(range(int(substring_subset_ratio*len(noisy_dataset)))), samples_to_frames_ratio, substring_length, substring_ratio
-    )
+    if substring_subset_ratio > 0:
+        noisy_substring_dataset = random_substrings(
+            noisy_dataset.select(range(int(substring_subset_ratio*len(noisy_dataset)))), samples_to_frames_ratio, substring_length, substring_ratio
+        )
+        clean_substring_dataset = random_substrings(
+            clean_dataset.select(range(int(substring_subset_ratio*len(clean_dataset)))), samples_to_frames_ratio, substring_length, substring_ratio
+        )
+    else:
+        noisy_substring_dataset = Dataset.from_dict({'input_values': [], 'labels': []})
+        clean_substring_dataset = Dataset.from_dict({'input_values': [], 'labels': []})
     noisy_string_dataset = noisy_dataset.select(range(int(substring_subset_ratio*len(noisy_dataset)), len(noisy_dataset))).remove_columns(['start', 'end'])
-    clean_substring_dataset = random_substrings(
-        clean_dataset.select(range(int(substring_subset_ratio*len(clean_dataset)))), samples_to_frames_ratio, substring_length, substring_ratio
-    )
     clean_string_dataset = clean_dataset.select(range(int(substring_subset_ratio*len(clean_dataset)), len(clean_dataset))).remove_columns(['start', 'end'])
 
     new_dataset = datasets.concatenate_datasets([noisy_substring_dataset, noisy_string_dataset, clean_substring_dataset, clean_string_dataset])
