@@ -215,7 +215,7 @@ def ctc_beam_search_cvc(logits, consonant_ids: list[int], vowel_id2label: dict[i
     logits = torch.stack([beam[i + 1] for i in range(len(sorted_vowel_labels))]).unsqueeze(0)
     return logits
 
-def ctc_cvcBeamSearch_wrapper(model: PreTrainedModel, consonant_ids: list[int], vowel_id2label: dict[int, str], padding_token_id: int, beam_width: int = 1, **kwargs):
+def ctc_cvc_wrapper(model: PreTrainedModel, consonant_ids: list[int], vowel_id2label: dict[int, str], padding_token_id: int, beam_width: int = 1, **kwargs):
     class ModelWrapper:
         class Config:
             id2label = {}

@@ -7,13 +7,13 @@ The full list of model + probability specifications to compare is:
     - `ctc_`
         - `0_timit_`
             - `centreMeans_vowels`
-            - `cvcBeamSearch_vowels`
+            - `cvc_vowels`
         - `1_timit_`
             - `centreMeans_vowels` ✅
-            - `cvcBeamSearch_vowels` ✅
+            - `cvc_vowels` ✅
         - `2_timit_`
             - `centreMeans_vowels`
-            - `cvcBeamSearch_vowels`
+            - `cvc_vowels`
 - `w2v2fr_`
 
 See also [abandoned branches](#archived-experiment).
@@ -33,7 +33,7 @@ where
 - `model`: The full model specification. See [naming conventions](#models). `human` is used for human responses.
 - `poolingMethod`: If the model does not put out probabilities that can be used directly (e.g. a CTC model), this describes the method used to get the probabilities. The methods in use are:
     - `centreMean`: Take the mean of the three centremost frames of the output sequence.
-    - `cvcBeamSearch`: Use a special beam search algorithm that only looks for CVC sequences, where consonants are pooled.
+    - `cvc`: Use a special beam search algorithm that only looks for CVC sequences, where consonants are pooled.
 - `outputs`: The possible outputs that the probabilities select between, if not all outputs from the model are used. Right now, the only outputs in use are:
     - `vowels`: English vowel classifications
 - `dataset`: The dataset used as stimuli. The only dataset in use for this is `wv`.
