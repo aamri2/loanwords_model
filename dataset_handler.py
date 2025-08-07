@@ -46,11 +46,12 @@ def align_ctc(dataset, model):
 
     def get_alignments(batch):
         input_values = torch.tensor([batch['input_values']])
-        log_probs = model(input_values).logits
+        with torch.no_grad():
+            log_probs = model(input_values).logits
         targets = torch.tensor([batch['labels']])
         tokens, scores = forced_align(log_probs, targets, blank=model.config.pad_token_id)
-        merged_tokens = merge_tokens(tokens[0], scores[0])
-        start, end = zip(*[(token_span.start, token_span.end) for token_span in merge_tokens(tokens[0], scores[0])])
+        merged_tokens = merge_tokens(tokens[0], scores[0], blank=model.config.pad_token_id)
+        start, end = zip(*[(token_span.start, token_span.end) for token_span in merged_tokens])
         batch['start'] = start
         batch['end'] = end
         return batch
@@ -460,6 +461,56 @@ def prepare_librispeechFR_ctc():
     librispeechFR = librispeechFR.map(prepare_dataset, batched=True, batch_size=250, remove_columns=librispeechFR['train'].column_names)
 
     return librispeechFR, vocab_dict
+
+def prepare_librispeech_ctc():
+    """
+    Prepares Multilingual LibriSpeech English 10k for CTC training. Uses the first 1% of the train set (approx. 100 hours).
+    """
+
+    librispeech = datasets.load_dataset('parler-tts/mls_eng_10k', verification_mode='no_checks', data_dir='data', data_files={
+        'train': [f'train-0000{i}-of-00317.parquet' for i in range(3)],
+        'test': 'test-00000-of-00001.parquet',
+        'dev': 'dev-00000-of-00001.parquet'
+    })
+    librispeech = librispeech.remove_columns(
+        ['original_path', 'begin_time', 'end_time', 'audio_duration', 'speaker_id', 'book_id']
+    )
+
+    folding = {'ə': 'ʌ', 'ɐ': 'ʌ', 'ᵻ': 'ɪ', 'əl': 'l', 'ɚ': 'ɹ', 'n̩': 'n', 'ææ': 'æ', 'ɑ̃': 'ɑ', 'o': 'oʊ', 'x': 'k', 'r': 'ɹ'}
+
+    def phonemize(batch): # removes length marker, ensures rhotic vowels are separate phonemes
+        text = batch['transcript']
+        separator = phonemizer.separator.Separator(word = '', phone = ' ')
+        batch['phone'] = [[folding.get(phone, phone) for phone in phones.replace('ː', '').replace('ɹ', ' ɹ').replace('ɚ', ' ɚ').replace('ɬ', 'ʃ l').replace('ɔ̃', 'ɔ n').replace('aɪə', 'aɪ ə').replace('ɡʲ', 'ɡ j').replace('ʔ', 'ɾ').replace('ɜ ɹ', 'ɚ').replace('ɜ', 'ɚ').replace('iə', 'j ə').split()] for phones in phonemizer.phonemize(text, separator = separator)] # type: ignore # returns a string
+        return batch
+
+    librispeech = librispeech.map(phonemize, batched=True, remove_columns='transcript')
+
+    def extract_phones(batch):
+        all_phones = sum(batch['phone'], [])
+        vocab = list(set(all_phones))
+        return {'vocab': [vocab], 'all_phones': [all_phones]}
+    
+    vocabs = librispeech.map(extract_phones, batched=True, batch_size=-1, remove_columns=librispeech['train'].column_names) # type: ignore
+    vocab_list = list(set(vocabs['train']['vocab'][0]) | set(vocabs['test']['vocab'][0]) | set(vocabs['dev']['vocab'][0])) # type: ignore
+    vocab_list.extend(['|', '<unk>', '<pad>'])
+    vocab_dict = {v: k for k, v in enumerate(vocab_list)}
+    with open('vocab.json', 'w') as f:
+        json.dump(vocab_dict, f)
+
+    tokenizer = Wav2Vec2PhonemeCTCTokenizer('vocab.json', do_phonemize=False)
+    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+    processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
+
+    def prepare_dataset(batch):
+        audio = [audio['array'] for audio in batch['audio']]
+        batch['input_values'] = processor(audio, sampling_rate=batch['audio'][0]['sampling_rate']).input_values
+        batch['labels'] = processor(text=batch['phone'], is_split_into_words=True, add_special_tokens=False).input_ids
+        return batch
+
+    librispeech = librispeech.map(prepare_dataset, batched=True, batch_size=250, remove_columns=librispeech['train'].column_names)
+
+    return librispeech, vocab_dict
 
 
 # class DatasetLoader:
