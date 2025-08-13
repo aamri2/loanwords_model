@@ -406,8 +406,27 @@ except FileNotFoundError:
     vowel_id2label = {v: k for k, v in vocab.items() if k in human_bl_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
-    p_w2v2fr_ctc_1_librispeechFR_cvcBeamSearch_vowels_wv = probabilities(
-        ctc_cvcBeamSearch_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+    p_w2v2fr_ctc_1_librispeechFR_cvc_vowels_wv = probabilities(
+        ctc_cvc_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2fr_ctc_1_librispeechFR_cvc_vowels_wv = world_vowel_sort(p_w2v2fr_ctc_1_librispeechFR_cvc_vowels_wv)
+    p_w2v2fr_ctc_1_librispeechFR_cvc_vowels_wv.to_csv('probabilities/p_w2v2fr_ctc_1_librispeechFR_cvc_vowels_wv.csv')
+
+# Transformer French Librispeech substrings CTC CVC beam search
+try:
+    p_w2v2fr_transformer_ctc_2_librispeechFRS_cvc_vowels_wv = pandas.read_csv('probabilities/p_w2v2fr_transformer_ctc_2_librispeechFRS_cvc_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2fr_transformer_ctc_2_librispeechFRS')
+    with open('../models/m_w2v2fr_transformer_ctc_2_librispeechFRS/vocab.json', encoding='utf-8') as f:
+        vocab = json.load(f)
+    consonants = ['b', 'd', 'dʒ', 'f', 'j', 'k', 'l', 'm', 'n', 'p', 's', 't', 'tʃ', 'v', 'w', 'z', 'ɡ', 'ɲ', 'ʁ', 'ʃ', 'ʒ']
+    consonant_ids = [vocab[consonant] for consonant in consonants]
+    vowel_id2label = {v: k for k, v in vocab.items() if k in human_bl_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2fr_transformer_ctc_2_librispeechFRS_cvc_vowels_wv = probabilities(
+        ctc_cvc_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
         world_vowels
     )
     p_w2v2fr_transformer_ctc_2_librispeechFRS_cvc_vowels_wv = world_vowel_sort(p_w2v2fr_transformer_ctc_2_librispeechFRS_cvc_vowels_wv)
