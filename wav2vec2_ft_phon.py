@@ -4,10 +4,12 @@ import random
 import seaborn
 import matplotlib.pyplot as plt
 import json
+import torch
 
-from transformers import Wav2Vec2ForCTC
+from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 from model_architecture import Wav2Vec2WithAttentionClassifier, Wav2Vec2ForCTCWithAttentionClassifier, Wav2Vec2ForCTCWithTransformer
-from model_handler import heatmap, pool, mae, diffmap, feature_extractor, probabilities, audio_to_input_values, ctc_wrapper, ctc_cvcBeamSearch_wrapper
+from model_handler import heatmap, pool, mae, diffmap, feature_extractor, probabilities, audio_to_input_values, ctc_wrapper, ctc_cvc_wrapper, model_to_map
+from ctc_decoder import decode_probabilities
 
 human_responses = pandas.read_csv('../human_vowel_responses.csv')
 fr_human_responses = human_responses[human_responses['language_indiv'] == 'french'].rename(columns = {'#phone': 'phone'})
@@ -47,6 +49,54 @@ with open('human_bl_vowels.json') as f:
     human_bl_vowels = json.load(f)
 bl_human_vowels = {value: key for key, value in human_bl_vowels.items()}
 bl_consonants = ['n', 'b', 'k', 's', 'Z', 'v', 'j', 'm', 'w', 'g', 't', 'R', 'l', 'd', 'S', 'N', 'z', 'p', 'f']
+librispeech_consonants = ["b", "d", "dʒ", "f", "h", "j", "k", "l", "m", "n", "p", "s", "t", "tʃ", "v", "w", "z", "ð", "ŋ", "ɡ", "ɹ", "ɾ", "ʃ", "ʒ", "θ"]
+librispeech_vowels = ['i', 'ɪ', 'eɪ', 'ɛ', 'æ', 'ɑ', 'ʌ', 'oʊ', 'u', 'ʊ']
+
+# transformer model librispeech substrings
+try:
+    p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv = pandas.read_csv('probabilities/p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv.csv')
+except FileNotFoundError:
+    model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_librispeechS')
+    processor = Wav2Vec2Processor.from_pretrained('../models/m_w2v2_transformer_ctc_2_librispeechS')
+    with open('../models/m_w2v2_transformer_ctc_2_librispeechS/vocab.json', encoding='utf-8') as f:
+        vocab = json.load(f)
+    vocab['C'] = [vocab[consonant] for consonant in librispeech_consonants]
+    vocab['V'] = [vocab[vowel] for vowel in librispeech_vowels]
+    logits = world_vowels.map(model_to_map(model, processor), batched = True, batch_size = 32)
+    def logits_to_probabilities(batch):
+        logits = torch.tensor(batch['logits']) # (N, T, C)
+        probabilities, classifications = decode_probabilities(['C', 'V', 'C'], 1, logits, vocab, pad_token_id=model.config.pad_token_id, as_strings=True)
+        probabilities = probabilities.flatten()
+        for key in batch.keys():
+            batch[key] = [item for item in batch[key] for i in range(len(classifications))] # each item appears C times
+        classifications *= logits.shape[0] # full set of classifications appears N times
+        return {key: batch[key] for key in batch.keys() if not key in ['input_values', 'logits']}\
+            | {'probabilities': probabilities, 'classification': classifications}
+    p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv = logits.map(logits_to_probabilities, batched = True, batch_size = 32, remove_columns=['input_values', 'logits'])
+    p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv = p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv.to_pandas()
+    p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv = world_vowel_sort(p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv)
+    p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv.to_csv('probabilities/p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv.csv')
+
+
+# transformer model timit augmented with substrings
+try:
+    p_w2v2_transformer_ctc_2_timitAS_cvc_vowels_wv = pandas.read_csv('probabilities/p_w2v2_transformer_ctc_2_timitAS_cvc_vowels_wv.csv')
+except FileNotFoundError:
+    ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_timitAS')
+    with open('../models/m_w2v2_transformer_ctc_2_timitAS/vocab.json') as f:
+        vocab = json.load(f)
+    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
+    consonant_ids = [vocab[consonant] for consonant in consonants]
+    vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
+    padding_token_id = vocab['<pad>']
+    beam_width = 100
+    p_w2v2_transformer_ctc_2_timitAS_cvc_vowels_wv = probabilities(
+        ctc_cvc_wrapper(ctc_model, consonant_ids=consonant_ids, vowel_id2label=vowel_id2label, padding_token_id=padding_token_id, beam_width=beam_width),
+        world_vowels
+    )
+    p_w2v2_transformer_ctc_2_timitAS_cvc_vowels_wv = world_vowel_sort(p_w2v2_transformer_ctc_2_timitAS_cvc_vowels_wv)
+    p_w2v2_transformer_ctc_2_timitAS_cvc_vowels_wv.to_csv('probabilities/p_w2v2_transformer_ctc_2_timitAS_cvc_vowels_wv.csv')
+
 
 # ctc classification model
 try:

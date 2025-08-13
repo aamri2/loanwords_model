@@ -231,3 +231,13 @@ def ctc_cvc_wrapper(model: PreTrainedModel, consonant_ids: list[int], vowel_id2l
             return {'logits': logits}
 
     return ModelWrapper(vowel_id2label)
+
+def model_to_map(model, processor) -> Callable:
+    """Takes a model and a processor, and returns a map function that adds logits to a prepared dataset."""
+
+    def apply_model(batch):
+        input = processor(batch['input_values'], sampling_rate=16000, return_tensors='pt', padding=True)
+        batch['logits'] = model(**input).logits
+        return batch
+    
+    return apply_model
