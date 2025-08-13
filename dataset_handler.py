@@ -210,16 +210,7 @@ def prepare_timit_ctc(aligned = False):
 
     timit = timit.map(extract_utterances, remove_columns=['phonetic_detail'])
 
-    # identify all phones in data
-    def extract_phones(batch):
-        all_phones = [phone for utterance in batch['utterance'] for phone in utterance]
-        vocab = list(set(all_phones))
-        return {'vocab': [vocab], 'all_phones': [all_phones]}
-
-    vocabs = timit.map(extract_phones, batched=True, batch_size=-1, keep_in_memory=True, remove_columns=timit.column_names['train'])
-    vocab_list = list(set(vocabs['train']['vocab'][0]) | set(vocabs['test']['vocab'][0]))
-    vocab_list.extend(['|', '<unk>', '<pad>'])
-    vocab_dict = {v: k for k, v in enumerate(vocab_list)}
+    vocab_dict = _get_vocab_dict(timit, 'utterance')
     with open('vocab.json', 'w') as f:
         json.dump(vocab_dict, f)
 
@@ -256,16 +247,7 @@ def prepare_bl_ctc(aligned = False) -> tuple[datasets.DatasetDict, dict[str, int
 
     bl = bl.map(extract_utterances, remove_columns=['phonetic_transcription'])
     
-    # identify phones in data
-    def extract_phones(batch):
-        all_phones = sum(batch['phone'], [])
-        vocab = list(set(all_phones))
-        return {'vocab': [vocab], 'all_phones': [all_phones]}
-    
-    vocabs = bl.map(extract_phones, batched=True, batch_size=-1, keep_in_memory=True, remove_columns=bl['train'].column_names)
-    vocab_list = list(set(vocabs['train']['vocab'][0]) | set(vocabs['test']['vocab'][0]))
-    vocab_list.extend(['|', '<unk>', '<pad>'])
-    vocab_dict = {v: k for k, v in enumerate(vocab_list)}
+    vocab_dict = _get_vocab_dict(bl, 'phone')
     with open('vocab.json', 'w') as f:
         json.dump(vocab_dict, f)
 
@@ -434,16 +416,8 @@ def prepare_librispeechFR_ctc():
     to_keep = librispeechFR.map(remove_language_switching, batched=True, batch_size=-1, remove_columns=librispeechFR['train'].column_names)
     for split in ['train', 'test', 'dev']:
         librispeechFR[split] = librispeechFR[split].select(to_keep[split]['to_keep'][0])
-
-    def extract_phones(batch):
-        all_phones = sum(batch['phone'], [])
-        vocab = list(set(all_phones))
-        return {'vocab': [vocab], 'all_phones': [all_phones]}
     
-    vocabs = librispeechFR.map(extract_phones, batched=True, batch_size=-1, remove_columns=librispeechFR['train'].column_names) # type: ignore
-    vocab_list = list(set(vocabs['train']['vocab'][0]) | set(vocabs['test']['vocab'][0]) | set(vocabs['dev']['vocab'][0])) # type: ignore
-    vocab_list.extend(['|', '<unk>', '<pad>'])
-    vocab_dict = {v: k for k, v in enumerate(vocab_list)}
+    vocab_dict = _get_vocab_dict(librispeechFR, 'phone')
     with open('vocab.json', 'w') as f:
         json.dump(vocab_dict, f)
 
@@ -478,8 +452,9 @@ def prepare_librispeech_ctc():
 
     folding = {'ə': 'ʌ', 'ɐ': 'ʌ', 'ᵻ': 'ɪ', 'əl': 'l', 'ɚ': 'ɹ', 'n̩': 'n', 'ææ': 'æ', 'ɑ̃': 'ɑ', 'o': 'oʊ', 'x': 'k', 'r': 'ɹ'}
 
+    transcript_column = 'text' if classic else 'transcript' # column name changes
     def phonemize(batch): # removes length marker, ensures rhotic vowels are separate phonemes
-        text = batch['transcript']
+        text = batch[transcript_column]
         separator = phonemizer.separator.Separator(word = '', phone = ' ')
         batch['phone'] = [[folding.get(phone, phone) for phone in phones.replace('ː', '').replace('ɹ', ' ɹ').replace('ɚ', ' ɚ').replace('ɬ', 'ʃ l').replace('ɔ̃', 'ɔ n').replace('aɪə', 'aɪ ə').replace('ɡʲ', 'ɡ j').replace('ʔ', 'ɾ').replace('ɜ ɹ', 'ɚ').replace('ɜ', 'ɚ').replace('iə', 'j ə').split()] for phones in phonemizer.phonemize(text, separator = separator)] # type: ignore # returns a string
         return batch
@@ -512,6 +487,33 @@ def prepare_librispeech_ctc():
 
     return librispeech, vocab_dict
 
+def _get_vocab_dict(dataset: DatasetDict, text_column: str) -> dict[str, int]:
+    """
+    Given a dataset with splits and transcriptions, returns a vocab_dict.
+    
+    Args:
+        dataset: A dataset with splits, with at least a column containing
+            the text to be converted to a vocabulary.
+        text_column: The name of the column containing the text. This can
+            be a column of pretokenized lists of strings, or just a
+            column of strings. In the latter case, each character
+            is treated as a separate token.
+    """
+    
+    vocab_set = set()
+    
+    def _extract_tokens(batch):
+        vocab_set.update(*batch[text_column])
+        return None
+    
+    dataset.map(_extract_tokens, batched = True)
+    vocab_list = list(vocab_set)
+    vocab_list.extend(['|', '<unk>', '<pad>']) # special tokens
+    vocab_dict = {v: k for k, v in enumerate(vocab_list)}
+    return vocab_dict
+
+
+        
 
 # class DatasetLoader:
 #     """A wrapper for info needed to dynamically load and prepare a dataset or multiple datasets.
