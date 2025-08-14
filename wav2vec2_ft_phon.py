@@ -42,6 +42,7 @@ world_vowels = Dataset.from_dict({'audio': [f'../stimuli_world_vowels/{audio_fil
 world_vowels = audio_to_input_values(world_vowels, feature_extractor)
 
 timit_vowels = ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ay', 'ah', 'oy', 'ow', 'uh', 'uw', 'er', 'ix']
+timit_consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
 possible_human_responses = sorted(list(set(human_responses['assimilation'])), key = lambda x: [vowel_order.index(c) for c in x])
 human_timit_vowels = {'i': 'iy', 'ɪ': 'ih', 'eɪ': 'ey', 'ɛ': 'eh', 'æ': 'ae', 'ɑ': 'aa', 'ʌ': 'ah', 'oʊ': 'ow', 'u': 'uw', 'ʊ': 'uh'}
 timit_human_vowels = {value: key for key, value in human_timit_vowels.items()}
@@ -51,6 +52,8 @@ bl_human_vowels = {value: key for key, value in human_bl_vowels.items()}
 bl_consonants = ['n', 'b', 'k', 's', 'Z', 'v', 'j', 'm', 'w', 'g', 't', 'R', 'l', 'd', 'S', 'N', 'z', 'p', 'f']
 librispeech_consonants = ["b", "d", "dʒ", "f", "h", "j", "k", "l", "m", "n", "p", "s", "t", "tʃ", "v", "w", "z", "ð", "ŋ", "ɡ", "ɹ", "ɾ", "ʃ", "ʒ", "θ"]
 librispeech_vowels = ['i', 'ɪ', 'eɪ', 'ɛ', 'æ', 'ɑ', 'ʌ', 'oʊ', 'u', 'ʊ']
+librispeechFR_consonants = ['b', 'd', 'dʒ', 'f', 'j', 'k', 'l', 'm', 'n', 'p', 's', 't', 'tʃ', 'v', 'w', 'z', 'ɡ', 'ɲ', 'ʁ', 'ʃ', 'ʒ']
+librispeechFR_vowels = [key for key, value in human_bl_vowels.items()]
 
 # transformer model librispeech substrings
 try:
@@ -85,8 +88,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_timitAS')
     with open('../models/m_w2v2_transformer_ctc_2_timitAS/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in timit_consonants]
     vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
@@ -176,8 +178,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2_ctc_2_timit')
     with open('../models/m_w2v2_ctc_2_timit/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in timit_consonants]
     vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
@@ -195,8 +196,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2_ctc_2_timit_v2')
     with open('../models/m_w2v2_ctc_2_timit_v2/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in timit_consonants]
     vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
@@ -214,8 +214,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2_ctc_1_timit')
     with open('../models/m_w2v2_ctc_1_timit/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in timit_consonants]
     vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
@@ -401,9 +400,8 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTC.from_pretrained('../models/m_w2v2fr_ctc_1_librispeechFR')
     with open('../models/m_w2v2fr_ctc_1_librispeechFR/vocab.json', encoding='utf-8') as f:
         vocab = json.load(f)
-    consonants = ['b', 'd', 'dʒ', 'f', 'j', 'k', 'l', 'm', 'n', 'p', 's', 't', 'tʃ', 'v', 'w', 'z', 'ɡ', 'ɲ', 'ʁ', 'ʃ', 'ʒ']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
-    vowel_id2label = {v: k for k, v in vocab.items() if k in human_bl_vowels.keys()}
+    consonant_ids = [vocab[consonant] for consonant in librispeechFR_consonants]
+    vowel_id2label = {vowel: vocab[vowel] for vowel in librispeechFR_vowels}
     padding_token_id = vocab['<pad>']
     beam_width = 100
     p_w2v2fr_ctc_1_librispeechFR_cvc_vowels_wv = probabilities(
@@ -420,9 +418,8 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2fr_transformer_ctc_2_librispeechFRS')
     with open('../models/m_w2v2fr_transformer_ctc_2_librispeechFRS/vocab.json', encoding='utf-8') as f:
         vocab = json.load(f)
-    consonants = ['b', 'd', 'dʒ', 'f', 'j', 'k', 'l', 'm', 'n', 'p', 's', 't', 'tʃ', 'v', 'w', 'z', 'ɡ', 'ɲ', 'ʁ', 'ʃ', 'ʒ']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
-    vowel_id2label = {v: k for k, v in vocab.items() if k in human_bl_vowels.keys()}
+    consonant_ids = [vocab[consonant] for consonant in librispeechFR_consonants]
+    vowel_id2label = {vowel: vocab[vowel] for vowel in librispeechFR_vowels}
     padding_token_id = vocab['<pad>']
     beam_width = 100
     p_w2v2fr_transformer_ctc_2_librispeechFRS_cvc_vowels_wv = probabilities(
@@ -440,8 +437,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_timit')
     with open('../models/m_w2v2_transformer_ctc_2_timit/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in timit_consonants]
     vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
@@ -460,8 +456,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_timit_v2')
     with open('../models/m_w2v2_transformer_ctc_2_timit_v2/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in timit_consonants]
     vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
@@ -479,8 +474,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_timitS_185e')
     with open('../models/m_w2v2_transformer_ctc_2_timitS_185e/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in timit_consonants]
     vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
@@ -498,8 +492,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_timitS_best')
     with open('../models/m_w2v2_transformer_ctc_2_timitS_best/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in timit_consonants]
     vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
@@ -517,8 +510,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_timit_best')
     with open('../models/m_w2v2_transformer_ctc_2_timit_best/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in timit_consonants]
     vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
@@ -536,8 +528,7 @@ except FileNotFoundError:
     ctc_model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2fr_transformer_ctc_2_timit')
     with open('../models/m_w2v2fr_transformer_ctc_2_timit/vocab.json') as f:
         vocab = json.load(f)
-    consonants = ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh']
-    consonant_ids = [vocab[consonant] for consonant in consonants]
+    consonant_ids = [vocab[consonant] for consonant in timit_consonants]
     vowel_id2label = {v: timit_human_vowels[k] for k, v in vocab.items() if k in timit_human_vowels.keys()}
     padding_token_id = vocab['<pad>']
     beam_width = 100
