@@ -80,6 +80,31 @@ except FileNotFoundError:
     p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv = world_vowel_sort(p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv)
     p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv.to_csv('probabilities/p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv.csv')
 
+# transformer model french librispeech substrings english base
+try:
+    p_w2v2_transformer_ctc_2_librispeechFRS_decode_vowels_wv = pandas.read_csv('probabilities/p_w2v2_transformer_ctc_2_librispeechFRS_decode_vowels_wv.csv')
+except FileNotFoundError:
+    model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../models/m_w2v2_transformer_ctc_2_librispeechFRS')
+    processor = Wav2Vec2Processor.from_pretrained('../models/m_w2v2_transformer_ctc_2_librispeechFRS')
+    with open('../models/m_w2v2_transformer_ctc_2_librispeechFRS/vocab.json', encoding='utf-8') as f:
+        vocab = json.load(f)
+    vocab['C'] = [vocab[consonant] for consonant in librispeechFR_consonants]
+    vocab['V'] = [vocab[vowel] for vowel in librispeechFR_vowels]
+    logits = world_vowels.map(model_to_map(model, processor), batched = True, batch_size = 32)
+    def logits_to_probabilities(batch):
+        logits = torch.tensor(batch['logits']) # (N, T, C)
+        probabilities, classifications = decode_probabilities(['C', 'V', 'C'], 1, logits, vocab, pad_token_id=model.config.pad_token_id, as_strings=True)
+        probabilities = probabilities.flatten()
+        for key in batch.keys():
+            batch[key] = [item for item in batch[key] for i in range(len(classifications))] # each item appears C times
+        classifications *= logits.shape[0] # full set of classifications appears N times
+        return {key: batch[key] for key in batch.keys() if not key in ['input_values', 'logits']}\
+            | {'probabilities': probabilities, 'classification': classifications}
+    p_w2v2_transformer_ctc_2_librispeechFRS_decode_vowels_wv = logits.map(logits_to_probabilities, batched = True, batch_size = 32, remove_columns=['input_values', 'logits'])
+    p_w2v2_transformer_ctc_2_librispeechFRS_decode_vowels_wv = p_w2v2_transformer_ctc_2_librispeechFRS_decode_vowels_wv.to_pandas()
+    p_w2v2_transformer_ctc_2_librispeechFRS_decode_vowels_wv = world_vowel_sort(p_w2v2_transformer_ctc_2_librispeechFRS_decode_vowels_wv)
+    p_w2v2_transformer_ctc_2_librispeechFRS_decode_vowels_wv.to_csv('probabilities/p_w2v2_transformer_ctc_2_librispeechFRS_decode_vowels_wv.csv')
+
 
 # transformer model timit augmented with substrings
 try:
