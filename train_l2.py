@@ -1,21 +1,15 @@
 import datasets
 import json
-from transformers import Wav2Vec2PhonemeCTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor, Wav2Vec2ForCTC, TrainingArguments, Trainer
+from transformers import Wav2Vec2PhonemeCTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor, TrainingArguments, Trainer
 import evaluate
 import torch
 import numpy
 #from dataset_handler import prepare_librispeechFRS_ctc
-from model_architecture import DataCollatorCTCWithPadding, Wav2Vec2ForCTCWithTransformer
+from model_architecture import DataCollatorCTCWithPadding, Wav2Vec2ForCTCWithTransformerL2
 
-try:
-    librispeechFRS = datasets.load_from_disk('../prep_librispeechFRS')
-    with open('../prep_librispeechFRS/vocab.json', encoding='utf-8') as f:
-        vocab_dict = json.load(f)
-except FileNotFoundError:
-    librispeechFRS, vocab_dict = prepare_librispeechFRS_ctc()
-    librispeechFRS.save_to_disk('../prep_librispeechFRS')
-    with open('../prep_librispeechFRS/vocab.json', 'w') as f:
-        json.dump(vocab_dict, f)
+librispeechFRS = datasets.load_from_disk('../prep_librispeechFRS')
+with open('../prep_librispeechFRS/vocab.json', encoding='utf-8') as f:
+    vocab_dict = json.load(f)
 
 tokenizer = Wav2Vec2PhonemeCTCTokenizer('../prep_librispeechFRS/vocab.json', do_phonemize=False)
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
@@ -40,20 +34,13 @@ def preprocess_logits_for_metrics(logits, labels):
 
 
 
-try:
-    model = Wav2Vec2ForCTCWithTransformer.from_pretrained('../transformer_model_untrained_librispeechFR', mask_time_length=1)
-except:
-    model = Wav2Vec2ForCTCWithTransformer.from_pretrained(
-        '../w2v2',
-        ctc_loss_reduction='mean',
-        pad_token_id=processor.tokenizer.pad_token_id, # type: ignore # tokenizer exists
-        vocab_size=len(vocab_dict),
-        use_weighted_layer_sum=True,
-        mask_time_length=1
-    )
-    model.save_pretrained('../transformer_model_untrained_librispeechFR')
+model = Wav2Vec2ForCTCWithTransformerL2.from_pretrained(
+    '../m_w2v2_transformer_ctc_2_librispeechCLS',
+    l2_pad_token_id=processor.tokenizer.pad_token_id, # type: ignore # tokenizer exists
+    l2_vocab_size=len(vocab_dict)
+)
 
-model.freeze_base_model()
+model.freeze_l1_model()
 
 training_args = TrainingArguments(
     group_by_length=True,
@@ -70,7 +57,7 @@ training_args = TrainingArguments(
     warmup_ratio=0.25,
     save_total_limit=2,
     push_to_hub=False,
-    output_dir='~/scratch/trainer_output_w2v2_transformer_ctc_2_librispeechFRS'
+    output_dir='~/scratch/trainer_output_w2v2_transformer_ctc_2_librispeechCLS_ctc_5_librispeechFRS'
 )
 
 trainer = Trainer(
@@ -84,5 +71,5 @@ trainer = Trainer(
     processing_class=processor.feature_extractor, # type: ignore # feature_extractor exists
 )
 trainer.train()
-trainer.save_model('m_w2v2_transformer_ctc_2_librispeechFRS')
-processor.save_pretrained('m_w2v2_transformer_ctc_2_librispeechFRS')
+trainer.save_model('m_w2v2_transformer_ctc_2_librispeechCLS_ctc_5_librispeechFRS')
+processor.save_pretrained('m_w2v2_transformer_ctc_2_librispeechCLS_ctc_5_librispeechFRS')
