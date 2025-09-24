@@ -711,8 +711,12 @@ except FileNotFoundError:
     p_w2v2fr_transformer_ctc_2_blS_cvc_vowels_wv = world_vowel_sort(p_w2v2fr_transformer_ctc_2_blS_cvc_vowels_wv)
     p_w2v2fr_transformer_ctc_2_blS_cvc_vowels_wv.to_csv('probabilities/p_w2v2fr_transformer_ctc_2_blS_cvc_vowels_wv.csv')
 
-# prev_phone = human_responses.set_index('filename')['prev_phone'].groupby('filename').first().rename_axis(index = 'file')
-# next_phone = human_responses.set_index('filename')['next_phone'].groupby('filename').first().rename_axis(index = 'file')
+prev_phone = human_responses.set_index('filename')['prev_phone'].groupby('filename').first().rename_axis(index = 'file')
+next_phone = human_responses.set_index('filename')['next_phone'].groupby('filename').first().rename_axis(index = 'file')
+
+def insert_prev_next_phone(probabilities):
+    probabilities.insert(len(probabilities.columns), 'prev_phone', prev_phone.loc[probabilities['file']].reset_index()['prev_phone'])
+    probabilities.insert(len(probabilities.columns), 'next_phone', next_phone.loc[probabilities['file']].reset_index()['next_phone'])
 
 # world_vowel_probabilities.insert(len(world_vowel_probabilities.columns), 'prev_phone', prev_phone.loc[world_vowel_probabilities['file']].reset_index()['prev_phone'])
 # human_responses_pooled.insert(len(human_responses_pooled.columns), 'prev_phone', prev_phone.loc[human_responses_pooled['file']].reset_index()['prev_phone'])
