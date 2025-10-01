@@ -55,6 +55,79 @@ librispeech_vowels = ['i', 'ɪ', 'eɪ', 'ɛ', 'æ', 'ɑ', 'ʌ', 'oʊ', 'u', 'ʊ'
 librispeechFR_consonants = ['b', 'd', 'dʒ', 'f', 'j', 'k', 'l', 'm', 'n', 'p', 's', 't', 'tʃ', 'v', 'w', 'z', 'ɡ', 'ɲ', 'ʁ', 'ʃ', 'ʒ']
 librispeechFR_vowels = [key for key, value in human_bl_vowels.items()]
 
+# all CVC with w2v2 timit 30e
+try:
+    p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv = pandas.read_csv(f'probabilities/p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv.csv')
+except FileNotFoundError:
+    model = Wav2Vec2ForCTCWithTransformer.from_pretrained(f'../models/m_w2v2_transformer_ctc_2_timit_30e_1')
+    processor = Wav2Vec2Processor.from_pretrained(f'../models/m_w2v2_transformer_ctc_2_timit_30e_1')
+    with open(f'../models/m_w2v2_transformer_ctc_2_timit_30e_1/vocab.json', encoding='utf-8') as f:
+        vocab = json.load(f)
+    vocab['C'] = [vocab[consonant] for consonant in timit_consonants]
+    vocab['V'] = [vocab[vowel] for vowel in timit_human_vowels.keys()]
+    for timit_vowel, vowel in timit_human_vowels.items():
+        if timit_vowel != vowel:
+            vocab[vowel] = vocab[timit_vowel]
+            vocab.pop(timit_vowel)
+    logits = world_vowels.map(model_to_map(model, processor), batched = True, batch_size = 32)
+    def logits_to_probabilities(batch):
+        logits = torch.tensor(batch['logits']) # (N, T, C)
+        probabilities, classifications = decode_probabilities([['C', 'V', 'C']], 0, logits, vocab, pad_token_id=model.config.pad_token_id, as_strings=True)
+        probabilities = probabilities.flatten()
+        for key in batch.keys():
+            batch[key] = [item for item in batch[key] for i in range(len(classifications))] # each item appears C times
+        classifications *= logits.shape[0] # full set of classifications appears N times
+        return {key: batch[key] for key in batch.keys() if not key in ['input_values', 'logits']}\
+            | {'probabilities': probabilities, **{k: v for k, v in zip(['onset_classification', 'vowel_classification', 'coda_classification'], zip(*classifications))}}
+    p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv = logits.map(logits_to_probabilities, batched = True, batch_size = 32, remove_columns=['input_values', 'logits'])
+    p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv = p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv.to_pandas()
+    p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv = world_vowel_sort(p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv)
+    p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv.to_csv(f'probabilities/p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv.csv')
+
+# 10 random initializations
+p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv = []
+for i in range(1, 11):
+    try:
+        p_w2v2_transformer_ctc_2_timit_30e_i_decode_vowels_wv = pandas.read_csv(f'probabilities/p_w2v2_transformer_ctc_2_timit_30e_{i}_decode_vowels_wv.csv')
+    except FileNotFoundError:
+        model = Wav2Vec2ForCTCWithTransformer.from_pretrained(f'../models/m_w2v2_transformer_ctc_2_timit_30e_{i}')
+        processor = Wav2Vec2Processor.from_pretrained(f'../models/m_w2v2_transformer_ctc_2_timit_30e_{i}')
+        with open(f'../models/m_w2v2_transformer_ctc_2_timit_30e_{i}/vocab.json', encoding='utf-8') as f:
+            vocab = json.load(f)
+        vocab['C'] = [vocab[consonant] for consonant in timit_consonants]
+        vocab['V'] = [vocab[vowel] for vowel in timit_human_vowels.keys()]
+        for timit_vowel, vowel in timit_human_vowels.items():
+            if timit_vowel != vowel:
+                vocab[vowel] = vocab[timit_vowel]
+                vocab.pop(timit_vowel)
+        logits = world_vowels.map(model_to_map(model, processor), batched = True, batch_size = 32)
+        def logits_to_probabilities(batch):
+            logits = torch.tensor(batch['logits']) # (N, T, C)
+            probabilities, classifications = decode_probabilities(['C', 'V', 'C'], 1, logits, vocab, pad_token_id=model.config.pad_token_id, as_strings=True)
+            probabilities = probabilities.flatten()
+            for key in batch.keys():
+                batch[key] = [item for item in batch[key] for i in range(len(classifications))] # each item appears C times
+            classifications *= logits.shape[0] # full set of classifications appears N times
+            return {key: batch[key] for key in batch.keys() if not key in ['input_values', 'logits']}\
+                | {'probabilities': probabilities, 'classification': classifications}
+        p_w2v2_transformer_ctc_2_timit_30e_i_decode_vowels_wv = logits.map(logits_to_probabilities, batched = True, batch_size = 32, remove_columns=['input_values', 'logits'])
+        p_w2v2_transformer_ctc_2_timit_30e_i_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_i_decode_vowels_wv.to_pandas()
+        p_w2v2_transformer_ctc_2_timit_30e_i_decode_vowels_wv = world_vowel_sort(p_w2v2_transformer_ctc_2_timit_30e_i_decode_vowels_wv)
+        p_w2v2_transformer_ctc_2_timit_30e_i_decode_vowels_wv.to_csv(f'probabilities/p_w2v2_transformer_ctc_2_timit_30e_{i}_decode_vowels_wv.csv')
+    p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv.append(p_w2v2_transformer_ctc_2_timit_30e_i_decode_vowels_wv)
+p_w2v2_transformer_ctc_2_timit_30e_1_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv[0]
+p_w2v2_transformer_ctc_2_timit_30e_2_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv[1]
+p_w2v2_transformer_ctc_2_timit_30e_3_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv[2]
+p_w2v2_transformer_ctc_2_timit_30e_4_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv[3]
+p_w2v2_transformer_ctc_2_timit_30e_5_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv[4]
+p_w2v2_transformer_ctc_2_timit_30e_6_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv[5]
+p_w2v2_transformer_ctc_2_timit_30e_7_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv[6]
+p_w2v2_transformer_ctc_2_timit_30e_8_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv[7]
+p_w2v2_transformer_ctc_2_timit_30e_9_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv[8]
+p_w2v2_transformer_ctc_2_timit_30e_10_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv[9]
+p_w2v2_transformer_ctc_2_timit_30e_mean_decode_vowels_wv = p_w2v2_transformer_ctc_2_timit_30e_1_decode_vowels_wv
+p_w2v2_transformer_ctc_2_timit_30e_mean_decode_vowels_wv['probabilities'] = sum(p['probabilities'] for p in p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv)/10
+
 # transformer model librispeech substrings
 try:
     p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv = pandas.read_csv('probabilities/p_w2v2_transformer_ctc_2_librispeechS_decode_vowels_wv.csv')
