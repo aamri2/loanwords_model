@@ -98,13 +98,28 @@ def get_symbols_lists(symbols: AnySymbols, symbol_of_interest: int) -> list[Symb
     if not isinstance(symbols_of_interest, list):
         raise ValueError(f'Symbol of interest {symbol_of_interest} not a list!')
 
-    symbols_lists = [symbols[:symbol_of_interest] + [symbol] + symbols[symbol_of_interest + 1:] for symbol in symbols_of_interest]
+    symbols_lists = [symbols[:symbol_of_interest] + [symbol] + symbols[symbol_of_interest + 1:] for symbol in _flatten_symbol(symbols_of_interest)]
     return symbols_lists
 
 class Nodes(dict):
     def __missing__(self, key): # newest node should have highest number
         self[key] = len(self)
         return self[key]
+
+def _flatten_symbol(symbols: Symbols) -> Symbols:
+    """
+    Converts a list of symbols like [[A, B], [C, D]] to the equivalent single-symbol list [[[A, C], [A, D], [B, C], [B, D]]].
+    """
+
+    flattened_symbols = [[]]
+
+    for symbol in symbols:
+        if isinstance(symbol, list):
+            flattened_symbols = [flattened_symbol + [i] for i in symbol for flattened_symbol in flattened_symbols]
+        else:
+            flattened_symbols = [flattened_symbols + [symbol]]
+
+    return flattened_symbols
 
 def _str_to_symbols(string: StringSymbols, vocab: dict[str, Recursive[int]]) -> Symbols:
     """Translates strings to symbols using a vocabulary. Multiple paths are permitted."""
