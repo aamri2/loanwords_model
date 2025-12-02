@@ -72,17 +72,19 @@ except FileNotFoundError:
     logits = world_vowels.map(model_to_map(model, processor), batched = True, batch_size = 32)
     def logits_to_probabilities(batch):
         logits = torch.tensor(batch['logits']) # (N, T, C)
-        probabilities, classifications = decode_probabilities([['C', 'V', 'C']], 0, logits, vocab, pad_token_id=model.config.pad_token_id, as_strings=True)
+        probabilities, classifications = decode_probabilities(['C', 'V', 'C'], None, logits, vocab, pad_token_id=model.config.pad_token_id, as_strings=True)
         probabilities = probabilities.flatten()
         for key in batch.keys():
             batch[key] = [item for item in batch[key] for i in range(len(classifications))] # each item appears C times
         classifications *= logits.shape[0] # full set of classifications appears N times
         return {key: batch[key] for key in batch.keys() if not key in ['input_values', 'logits']}\
-            | {'probabilities': probabilities, **{k: v for k, v in zip(['onset_classification', 'vowel_classification', 'coda_classification'], zip(*classifications))}}
-    p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv = logits.map(logits_to_probabilities, batched = True, batch_size = 32, remove_columns=['input_values', 'logits'])
+            | {'probabilities': probabilities, **{k: list(v) for k, v in zip(['onset_classification', 'vowel_classification', 'coda_classification'], zip(*classifications))}} # need to separate list of rows into list of columns with labels
+    p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv = logits.map(logits_to_probabilities, batched = True, batch_size = 32, remove_columns=['input_values', 'logits'], cache_file_name='../temp_p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv_logits_to_probabilities_cache.arrow')
     p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv = p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv.to_pandas()
     p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv = world_vowel_sort(p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv)
-    p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv.to_csv(f'probabilities/p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv.csv')
+    p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv.to_csv('probabilities/p_w2v2_transformer_ctc_2_timit_30e_1_decode_cvc_wv.csv')
+
+# all CVC with librispeechCL or whisper
 
 # 10 random initializations
 p_w2v2_transformer_ctc_2_timit_30e_N_decode_vowels_wv = []

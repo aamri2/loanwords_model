@@ -15,12 +15,12 @@ class Probabilities(NamedTuple):
     classifications: AnySymbols
 
 @overload
-def decode_probabilities(symbols: Symbols, symbol_of_interest: int, logits: torch.Tensor, vocab: None, pad_token_id: int, as_strings: Literal[False]) -> Probabilities:
+def decode_probabilities(symbols: Symbols, symbol_of_interest: Optional[int], logits: torch.Tensor, vocab: None, pad_token_id: int, as_strings: Literal[False]) -> Probabilities:
     pass
 @overload
-def decode_probabilities(symbols: StringSymbols, symbol_of_interest: int, logits: torch.Tensor, vocab: dict[str, Recursive[int]], pad_token_id: int, as_strings: Literal[True]) -> Probabilities:
+def decode_probabilities(symbols: StringSymbols, symbol_of_interest: Optional[int], logits: torch.Tensor, vocab: dict[str, Recursive[int]], pad_token_id: int, as_strings: Literal[True]) -> Probabilities:
     pass
-def decode_probabilities(symbols: AnySymbols, symbol_of_interest: int, logits: torch.Tensor, vocab: Optional[dict[str, Recursive[int]]] = None, pad_token_id: int = 0, as_strings: bool = False) -> Probabilities:
+def decode_probabilities(symbols: AnySymbols, symbol_of_interest: Optional[int], logits: torch.Tensor, vocab: Optional[dict[str, Recursive[int]]] = None, pad_token_id: int = 0, as_strings: bool = False) -> Probabilities:
     """
     Given some possible decodings, returns the relative probabilities of each.
 
@@ -34,7 +34,7 @@ def decode_probabilities(symbols: AnySymbols, symbol_of_interest: int, logits: t
             and `symbol_of_interest = 1`, the output will contain the respective
             probabilities of the decodings 'bat' and 'but'. Must refer to a list,
             which may itself contain lists and lists of lists. Only top-level
-            variant paths are considered.
+            variant paths are considered. If none, considers all possible decodings.
         logits: A torch.Tensor of shape `(N, T, C)`, where `N` is the batch size,
             `T` is the length the longest item in the batch, and `C` is the
             vocabulary size.
@@ -51,7 +51,7 @@ def decode_probabilities(symbols: AnySymbols, symbol_of_interest: int, logits: t
             raise ValueError('vocab required when as_strings True!')
         symbols = _str_to_symbols(symbols, vocab)
     
-    if not isinstance(symbols[symbol_of_interest], list) or not len(symbols[symbol_of_interest]) > 1:
+    if symbol_of_interest is not None and (not isinstance(symbols[symbol_of_interest], list) or not len(symbols[symbol_of_interest]) > 1):
         raise ValueError('Symbol of interest must have multiple options!')
 
     if not pad_token_id == 0:
@@ -62,7 +62,7 @@ def decode_probabilities(symbols: AnySymbols, symbol_of_interest: int, logits: t
     symbols_lists = get_symbols_lists(symbols, symbol_of_interest)
     scores = _get_scores(symbols_lists, decodings)
     probabilities = scores.softmax(1)
-    classifications = [symbols_list[symbol_of_interest] for symbols_list in symbols_lists]
+    classifications = [symbols_list[symbol_of_interest] if symbol_of_interest is not None else symbols_list for symbols_list in symbols_lists]
     
     if not pad_token_id == 0:
         classifications = _unzero_pad_token_id(classifications, pad_token_id)
@@ -72,7 +72,7 @@ def decode_probabilities(symbols: AnySymbols, symbol_of_interest: int, logits: t
 
     return Probabilities(probabilities, classifications)
 
-def get_symbols_lists(symbols: AnySymbols, symbol_of_interest: int) -> list[Symbols]:
+def get_symbols_lists(symbols: AnySymbols, symbol_of_interest: Optional[int]) -> list[AnySymbols]:
     """
     Convenience function to easily distinguish paths of interest.
 
@@ -91,14 +91,17 @@ def get_symbols_lists(symbols: AnySymbols, symbol_of_interest: int) -> list[Symb
     is permitted.
     """
 
-    if symbol_of_interest < 0 or symbol_of_interest > len(symbols):
+    if symbol_of_interest is not None and (symbol_of_interest < 0 or symbol_of_interest > len(symbols)):
         raise ValueError(f'Symbol of interest {symbol_of_interest} not in range!')
     
-    symbols_of_interest = symbols[symbol_of_interest]
+    symbols_of_interest = symbols[symbol_of_interest] if symbol_of_interest is not None else symbols
     if not isinstance(symbols_of_interest, list):
         raise ValueError(f'Symbol of interest {symbol_of_interest} not a list!')
 
-    symbols_lists = [symbols[:symbol_of_interest] + [symbol] + symbols[symbol_of_interest + 1:] for symbol in _flatten_symbol(symbols_of_interest)]
+    if symbol_of_interest is not None:
+        symbols_lists = [symbols[:symbol_of_interest] + symbol + symbols[symbol_of_interest + 1:] for symbol in _flatten_symbol(symbols_of_interest)]
+    else:
+        symbols_lists = _flatten_symbol(symbols_of_interest)
     return symbols_lists
 
 class Nodes(dict):
@@ -196,7 +199,7 @@ def _get_decodings(symbols: Symbols, logits: torch.Tensor) -> k2.Fsa:
     b_fst = _paths_to_fst(_get_paths(symbols))
 
     ab_fst = k2.connect(k2.compose(a_fst, b_fst)) # graph of all possible decodings
-    decodings = k2.get_lattice(logits, torch.full_like(logits[:, 0, 0], logits.shape[1]), ab_fst, search_beam = 100, output_beam = 100, min_active_states = 0)
+    decodings = k2.get_lattice(logits, torch.full_like(logits[:, 0, 0], logits.shape[1]), ab_fst, search_beam = 1000, output_beam = 1000, min_active_states = 0)
 
     return decodings
 
@@ -225,7 +228,7 @@ def _get_scores(symbols_lists: list[Symbols], decodings: k2.Fsa) -> torch.Tensor
         subset_fst = _paths_to_fst(_get_paths(symbols))
         decodings_subset_fst = k2.connect(k2.compose(decodings, subset_fst))
         if decodings_subset_fst[0].shape[0] == 0: # path invalid
-            raise ValueError(f'Symbols {symbols} not found in decodings {decodings}.')
+            raise ValueError(f'Symbols {symbols} not found in decodings.')
         with torch.no_grad():
             scores[:, i] = decodings_subset_fst.get_tot_scores(True, True)
     
