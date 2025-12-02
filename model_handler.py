@@ -1,4 +1,6 @@
 import pandas, numpy
+import scipy
+import sklearn
 import seaborn.objects
 import torch
 import json
@@ -16,9 +18,6 @@ model_name = 'm_w2v2_attn_class_2_timitEV'
 
 model = Wav2Vec2WithAttentionClassifier.from_pretrained(f'{model_dir}/{model_name}')
 feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(f'{model_dir}/{model_name}')
-
-
-
 
 def ctc_wrapper(model: PreTrainedModel, **kwargs) -> Callable[[torch.Tensor], dict[str, torch.Tensor]]:
     """
@@ -48,7 +47,7 @@ def centre_probabilities(batch):
     batch['probabilities'] = torch.nn.functional.softmax(centre_logits, dim=-1)[0][:63] # remove <pad>
     return batch
 
-def pool(probabilities: pandas.DataFrame, *args: str, **kwargs: Any):
+def pool(probabilities: pandas.DataFrame, *args: str, **kwargs: Any) -> pandas.DataFrame:
     """
     Returns a pivot table in wide format.
     
@@ -115,6 +114,51 @@ def mae(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *a
     q = pool(probabilities_q, *args, **kwargs).to_numpy()
     MAE = numpy.mean(numpy.abs(p - q)).item()
     return MAE
+
+def pairwise_cosine_similarity(probabilities: pandas.DataFrame, by: str, *args: str, **kwargs: Any):
+    """Returns pairwise cosine similarities, with a matrix of 'by'."""
+
+    p = pool(probabilities, by, *args, **kwargs)
+    cosine_similarity = sklearn.metrics.pairwise.cosine_similarity(p)
+    return pandas.DataFrame(cosine_similarity, index=p.index, columns=p.index)
+
+def pairwise_cosine_similarity_heatmap(probabilities: Union[pandas.DataFrame, list[pandas.DataFrame]], by: str, *args: str, **kwargs: Any):
+    """Heatmap of pairwise cosine similarities, with a matrix of 'by'."""
+
+    if not isinstance(probabilities, list):
+        probabilities = [probabilities]
+    for probability in probabilities:
+        plt.figure()
+        p = pairwise_cosine_similarity(probability, by, *args, **kwargs)
+        seaborn.heatmap(p, cmap = 'crest', square = True, vmin = 0, vmax = 1)
+    plt.show()
+
+def jensen_shannon_divergence(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any) -> float:
+    """Returns the row-wise Jensen-Shannon divergences between the pooled probabilities."""
+
+    p = pool(probabilities_p, *args, **kwargs).to_numpy()
+    q = pool(probabilities_q, *args, **kwargs).to_numpy()
+    m = (p + q)/2 # mixture distribution
+
+    d_p_m = (p*(numpy.log(p.clip(min=1e-16)) - numpy.log(m.clip(min=1e-16)))).sum(1)
+    d_q_m = (q*(numpy.log(q.clip(min=1e-16)) - numpy.log(m.clip(min=1e-16)))).sum(1)
+    js_div = 0.5*(d_p_m + d_q_m)
+    return js_div
+
+def mean_jensen_shannon_divergence(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any) -> float:
+    """Returns the mean row-wise Jensen-Shannon divergences between the pooled probabilities."""
+
+    js_div = jensen_shannon_divergence(probabilities_p, probabilities_q, *args, **kwargs)
+    return sum(js_div)/len(js_div)
+
+
+def mutual_information(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any) -> float:
+    """Returns the mutual information between the pooled probabilities."""
+
+    # H(x, y)
+    #joint_entropy = scipy.spatial.distance.jensenshannon(probabilities_p, probabilities_q)
+    mutual_information = torch.nn.functional.kl_div(torch.log(torch.tensor(probabilities_p.values)), torch.tensor(probabilities_q.values)).item()
+    # mutual_information = 
 
 def diffmap(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any):
     """Displays a heatmap of the squared difference between the two probabilities."""
