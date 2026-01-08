@@ -107,7 +107,7 @@ class SpecComplex(Spec[Sequence[Spec | Sequence[Spec] | None]]):
     A specification containing multiple, ordered, named values that are themselves specifications.
     """
         
-    def __init__(self, value: Self | Sequence[Spec | Sequence[Spec] | None] | None = None, *args, **kwargs):
+    def __init__(self, value: Self | Sequence[Spec | Sequence[Spec] | None] | str | None = None, *args, **kwargs):
         """
         Classes can be initialized with either an instance of itself, a sequence of values, or each value specified as keyword arguments.
         """
