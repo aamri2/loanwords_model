@@ -1,4 +1,5 @@
-from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict, load_dataset, load_from_disk
+from spec import TrainingDatasetSpec, _SEPARATOR
+from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict, load_from_disk
 import datasets
 import json
 import pandas
@@ -12,15 +13,61 @@ from pyacoustics.speech_filters import speech_shaped_noise
 import numpy as np
 from torchaudio.functional import forced_align, merge_tokens
 
+_DATASET_PATH = '../'
+_DATASET_PREFIX = 'prep'
 
-class PhoneDataset(Dataset):
-    """Extends dataset with useful attributes and functions for phonetic or phonemic transcriptions."""
+class TrainingDataset():
+    """
+    Uses TrainingDatasetSpec to parse and load datasets.
+    """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    spec: TrainingDatasetSpec
+    dataset: Dataset | DatasetDict | IterableDataset | IterableDatasetDict
+    vocab: dict[str, int]
+    consonants: list[str]
+    vowels: list[str]
 
-    # TODO
+    def __init__(self, spec: str | TrainingDatasetSpec):
+        self.spec = TrainingDatasetSpec(spec)
+        self.dataset = load_dataset(self.spec)
+        self.vocab = get_dataset_vocab(self.spec)
+        self.consonants = get_consonants(self.spec)
+        self.vowels = get_vowels(self.spec)
 
+def load_dataset(spec: str | TrainingDatasetSpec, path = _DATASET_PATH, prefix = _DATASET_PREFIX) -> Dataset | DatasetDict | IterableDataset | IterableDatasetDict:
+    """Loads a dataset given its specification."""
+    
+    return datasets.load_from_disk(f'{path}{prefix}{_SEPARATOR}{spec}')
+
+def get_dataset_vocab(spec: str | TrainingDatasetSpec, path = _DATASET_PATH, prefix = _DATASET_PREFIX) -> dict[str, int]:
+    """Loads a dataset's vocabulary given its specification."""
+
+    with open(f'{path}{prefix}{_SEPARATOR}{spec}', encoding = 'utf-8') as f:
+        vocab = json.load(f)
+    return vocab
+
+consonants = {
+    'timit': ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh'],
+    'librispeech': ["b", "d", "dʒ", "f", "h", "j", "k", "l", "m", "n", "p", "s", "t", "tʃ", "v", "w", "z", "ð", "ŋ", "ɡ", "ɹ", "ɾ", "ʃ", "ʒ", "θ"],
+    'librispeechFR': ['b', 'd', 'dʒ', 'f', 'j', 'k', 'l', 'm', 'n', 'p', 's', 't', 'tʃ', 'v', 'w', 'z', 'ɡ', 'ɲ', 'ʁ', 'ʃ', 'ʒ'],
+    'bl': ['n', 'b', 'k', 's', 'Z', 'v', 'j', 'm', 'w', 'g', 't', 'R', 'l', 'd', 'S', 'N', 'z', 'p', 'f']
+}
+
+vowels = {
+    
+}
+
+def get_consonants(spec: str | TrainingDatasetSpec) -> list[str]:
+    """Given a specification, gets the consonants in the transcription system of the dataset."""
+
+    spec = TrainingDatasetSpec(spec)
+    return consonants[spec.family]
+
+def get_vowels(spec: str | TrainingDatasetSpec) -> list[str]:
+    """Given a specification, gets the vowels in the transcription system of the dataset."""
+
+    spec = TrainingDatasetSpec(spec)
+    return vowels[spec.family]
 
 def make_noisy(dataset, snr):
     """Takes a prepared dataset and returns it with noise added."""
@@ -176,7 +223,7 @@ def prepare_wvEN():
     wv = pandas.read_csv('WorldVowels_stimuli.csv')
     files = ['../wv/' + i for i in wv[wv['language'] == 'EN']['#file_extract']]
     phone = list(wv[wv['language'] == 'EN']['#phone'])
-    wvEN = datasets.Dataset.from_dict({'audio': files, 'labels': phone}, split=datasets.Split.TRAIN)\
+    wvEN = Dataset.from_dict({'audio': files, 'labels': phone}, split=datasets.Split.TRAIN)\
         .cast_column('audio', datasets.Audio())\
         .class_encode_column('labels')
     #wvEN = wvEN.train_test_split(seed=2025, stratify_by_column='labels')
@@ -195,7 +242,7 @@ def prepare_wvEN():
 
 def prepare_timit_ctc(aligned = False):
     """Prepares TIMIT for CTC sequence classification."""
-    timit = load_dataset('timit_asr', data_dir='../timit/TIMIT')
+    timit = datasets.load_dataset('timit_asr', data_dir='../timit/TIMIT')
     timit = timit.remove_columns(['file', 'text', 'word_detail', 'dialect_region', 'sentence_type', 'speaker_id', 'id'])
     
     timit_folding = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er', 'hv': 'hh', 'ix': 'ih', 'el': 'l', 'em': 'm', 'en': 'n', 'nx': 'n', 'eng': 'ng', 'ux': 'uw'} # did not merge zh/sh
@@ -234,7 +281,7 @@ def prepare_bl_ctc(aligned = False) -> tuple[datasets.DatasetDict, dict[str, int
     
     Returns an aligned dataset if 'aligned' is set to True.
     """
-    bl = load_dataset('../BL-Database/dataset')
+    bl = datasets.load_dataset('../BL-Database/dataset')
     bl = bl['train'].train_test_split() # type: ignore # known to be DatasetDict
     bl = bl.cast_column('audio', datasets.Audio(sampling_rate=16000))
 
@@ -266,7 +313,7 @@ def prepare_bl_ctc(aligned = False) -> tuple[datasets.DatasetDict, dict[str, int
 
 def prepare_targets():
     """Extracts TIMIT syllables into a dataset, which is prepared for training."""
-    timit = load_dataset('timit_asr', data_dir='../timit/TIMIT')
+    timit = datasets.load_dataset('timit_asr', data_dir='../timit/TIMIT')
     timit = timit.remove_columns(['file', 'word_detail', 'dialect_region', 'sentence_type', 'speaker_id', 'id'])
 
     timit_folding = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er', 'hv': 'hh', 'ix': 'ih', 'el': 'l', 'em': 'm', 'en': 'n', 'nx': 'n', 'eng': 'ng', 'ux': 'uw'} # did not merge zh/sh
@@ -324,7 +371,7 @@ def prepare_masked_targets():
     """
     Prepares TIMIT utterances, with additional columns 'sample_start' and 'sample_stop'.
     """
-    timit = load_dataset('timit_asr', data_dir='../timit/TIMIT')
+    timit = datasets.load_dataset('timit_asr', data_dir='../timit/TIMIT')
     timit = timit.remove_columns(['file', 'word_detail', 'dialect_region', 'sentence_type', 'speaker_id', 'id'])
 
     timit_folding = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er', 'hv': 'hh', 'ix': 'ih', 'el': 'l', 'em': 'm', 'en': 'n', 'nx': 'n', 'eng': 'ng', 'ux': 'uw'} # did not merge zh/sh
@@ -436,7 +483,7 @@ def prepare_librispeechFR_ctc():
 
     return librispeechFR, vocab_dict
 
-def prepare_librispeech_ctc(classic=False):
+def prepare_librispeech_ctc(classic=False, word_boundaries=False):
     """
     Prepares Multilingual LibriSpeech English 10k for CTC training. Uses the first 1% of the train set (approx. 100 hours).
     
@@ -466,7 +513,7 @@ def prepare_librispeech_ctc(classic=False):
     transcript_column = 'text' if classic else 'transcript' # column name changes
     def phonemize(batch): # removes length marker, ensures rhotic vowels are separate phonemes
         text = batch[transcript_column]
-        separator = phonemizer.separator.Separator(word = '', phone = ' ')
+        separator = phonemizer.separator.Separator(word = '|' if word_boundaries else '', phone = ' ')
         batch['phone'] = [[folding.get(phone, phone) for phone in phones.replace('ː', '').replace('ɹ', ' ɹ').replace('ɚ', ' ɚ').replace('ɬ', 'ʃ l').replace('ɔ̃', 'ɔ n').replace('aɪə', 'aɪ ə').replace('ɡʲ', 'ɡ j').replace('ʔ', 'ɾ').replace('ɜ ɹ', 'ɚ').replace('ɜ', 'ɚ').replace('iə', 'j ə').split()] for phones in phonemizer.phonemize(text, separator = separator)] # type: ignore # returns a string
         return batch
 

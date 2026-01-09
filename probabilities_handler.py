@@ -1,0 +1,154 @@
+from spec import ProbabilitySpec, HumanProbabilitySpec, TestDatasetSpec, _SEPARATOR
+import pandas as pd
+import seaborn as sns
+from matplotlib import pyplot as plt
+
+_PROBABILITIES_PATH = 'probabilities/'
+_PROBABILITIES_PREFIX = 'p'
+
+_WV_DATA_PATH = 'WorldVowels_stimuli.csv'
+_WV_FORMANTS_PATH = '../stimuli_world_vowels/formants/world_vowels_formants.csv'
+
+def load_wv_data(path = _WV_DATA_PATH) -> pd.DataFrame:
+    """Loads and prepares WV data for use as a test dataset."""
+
+    return pd.read_csv(path).rename({'index': 'file'}, axis = 1)
+
+def load_wv_formants(dataset: 'TestDataset') -> pd.DataFrame:
+    """Loads and prepares WV formants in a DataFrame."""
+
+    formants = pd.read_csv(_WV_FORMANTS_PATH)
+    formants['F1_norm'] = formants['F1'] / formants['F3']
+    formants['F2_norm'] = formants['F2'] / formants['F3']
+    formants = formants.set_index('file')
+    return formants
+
+def load_wv_contexts(dataset: 'TestDataset') -> pd.DataFrame:
+    """Loads and prepares WV contexts in a DataFrame."""
+
+    contexts = dataset.dataset.loc[:, ['file', 'prev_phone', 'next_phone', 'context']]
+    contexts = contexts.set_index('file')
+    return contexts
+
+class TestDataset():
+    """Uses TestDatasetSpec to load and prepare test datasets."""
+
+    spec: TestDatasetSpec
+    dataset: pd.DataFrame
+    _test_dataset_loader = {'wv': load_wv_data}
+    formants: pd.DataFrame
+    _formant_loader = {'wv': load_wv_formants}
+    contexts: pd.DataFrame
+    _context_loader = {'wv': load_wv_contexts}
+
+    def __init__(self, spec: str | TestDatasetSpec):
+        self.spec = TestDatasetSpec(spec)
+        self.dataset = self.load_dataset()
+        self.formants = self.load_formants()
+        self.contexts = self.load_contexts()
+
+    def load_dataset(self):
+        try:
+            return self._test_dataset_loader[self.spec.value]()
+        except KeyError:
+            raise NotImplementedError(f"Cannot load test dataset {self.spec}.")
+    
+    def load_formants(self) -> pd.DataFrame:
+        try:
+            return self._formant_loader[self.spec.value](self)
+        except KeyError:
+            raise NotImplementedError(f"Cannot load formants for test dataset {self.spec}.")
+    
+    def load_contexts(self) -> pd.DataFrame:
+        try:
+            return self._context_loader[self.spec.value](self)
+        except KeyError:
+            raise NotImplementedError(f"Cannot load contexts for test dataset {self.spec}.")
+
+class Probabilities():
+    """
+    Uses ProbabilitySpec to load and parse model probabilities, and
+    process and display them in various ways.
+    """
+
+    spec: ProbabilitySpec
+    probabilities: pd.DataFrame
+
+    def __init__(self, spec: str | ProbabilitySpec):
+        self.spec = ProbabilitySpec(spec)
+        self.test_dataset = TestDataset(self.spec.test_dataset)
+        self.probabilities = self.load_probabilities()
+
+    def pool(self, *args: str, **kwargs: str) -> pd.DataFrame:
+        """
+        Returns a pivot table in wide format.
+        
+        Args:
+            *args: Columns to pool across.
+            **kwargs: Columns to filter by.
+        """
+        probabilities = self.probabilities
+
+        if kwargs:
+            filter = zip(*[probabilities[column] == value for column, value in kwargs.items()])
+            probabilities = probabilities[[all(row) for row in filter]]
+        
+        pooled_probabilities = probabilities.pivot_table(values = 'probabilities', columns = 'classification', index = args, sort = False)
+        return pooled_probabilities
+    
+    def heatmap(self, *args: str, **kwargs: str):
+        """Uses pool to create a seaborn heatmap."""
+
+        sns.heatmap(self.pool(*args, **kwargs), cmap = 'crest', square = True)
+        plt.show()
+
+    def load_probabilities(self, path = _PROBABILITIES_PATH, prefix = _PROBABILITIES_PREFIX) -> pd.DataFrame:
+        """Loads fully-prepared probabilities from a specification. Attempts to create them if missing."""
+
+        try:
+            probabilities = pd.read_csv(f'{path}{prefix}{_SEPARATOR}{self.spec}.csv')
+        except:
+            raise NotImplementedError("Cannot dynamically generate probabilities yet.")
+        
+        probabilities = self.prepare_probabilities(probabilities)
+        return probabilities
+
+    def prepare_probabilities(self, probabilities: pd.DataFrame) -> pd.DataFrame:
+        """Prepares probabilities from the file."""
+
+        probabilities = self._add_formants(probabilities)
+        probabilities = self._add_contexts(probabilities)
+        return probabilities
+    
+    def _add_formants(self, probabilities: pd.DataFrame) -> pd.DataFrame:
+        """
+        Returns probabilities with formant columns added.
+        
+        Adds columns F1, F2, F3, F1_norm, and F2_norm.
+        """
+
+        formants = self.test_dataset.formants
+        formants['F1_norm'] = formants['F1'] / formants['F3']
+        formants['F2_norm'] = formants['F2'] / formants['F3']
+
+        probabilities = probabilities.join(formants, on = 'file', validate = 'many_to_one')
+        return probabilities
+    
+    def _add_contexts(self, probabilities: pd.DataFrame) -> pd.DataFrame:
+        """Returns the probabilities with added columns prev_phone, next_phone"""
+
+        contexts = self.test_dataset.contexts
+        probabilities = probabilities.join(contexts, on = 'file', validate = 'many_to_one')
+        return probabilities
+    
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({repr(str(self.spec))})'
+
+    
+class HumanProbabilities(Probabilities):
+    spec: HumanProbabilitySpec
+
+    def __init__(self, spec: str | HumanProbabilitySpec):
+        self.spec = HumanProbabilitySpec(spec)
+        self.test_dataset = TestDataset(self.spec.test_dataset)
+        self.probabilities = self.load_probabilities()

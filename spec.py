@@ -81,7 +81,6 @@ class SpecUnit(Spec[str]):
         super().__init__(value, *args, **kwargs)
     
     @property
-    @cache
     def value(self) -> str:
         return self._value
     
@@ -94,7 +93,7 @@ class SpecUnit(Spec[str]):
         cls.name = name
 
     def __hash__(self) -> int:
-        return super().__hash__(self.value)
+        return super().__hash__(self._value)
     
     def __str__(self):
         return super().__str__(self._value)
@@ -322,6 +321,13 @@ class SpecComplex(Spec[Sequence[Spec | Sequence[Spec] | None]]):
 class BaseModelSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr']):
     """Specification unit for base models."""
 
+    @property
+    def architecture(self) -> str:
+        if self.value in ['w2v2', 'w2v2fr']:
+            return 'Wav2Vec2'
+        else:
+            raise NotImplementedError(f'Architecture for base model {self.value} unspecified.')
+
 class LayerSpec(SpecUnit, name = 'layer', allowed_values = ['attn', 'class', 'transformer', 'ctc']):
     """Specification unit for layer types."""
 
@@ -345,13 +351,25 @@ class TrainingDatasets(Container):
 
     def __contains__(self, x: str) -> bool:
         return bool(self.parser.fullmatch(x))
+    
+    def family(self, x: str) -> str:
+        if x in self:
+            return cast(re.Match[str], self.parser.search(x)).group()
+        else:
+            raise ValueError(f"{x} is not a valid dataset.")
 
 class TrainingDatasetSpec(SpecUnit, name = 'training_dataset', allowed_values = TrainingDatasets()):
     """Specification for training datasets."""
 
+    _allowed_values: TrainingDatasets
+
+    @property
+    def family(self):
+        return self._allowed_values.family(self.value)
+
 class TrainingVars(Container):
     value: str
-    allowed_patterns = ['v[0-9]+', '[0-9]+e', '[0-9]+'] # regex patterns; versions, epoch counts, initializations
+    allowed_patterns = ['v[0-9]+', '[0-9]+e', '[0-9]+', 'best'] # regex patterns; versions, epoch counts, initializations
     parser = re.compile(f"({'|'.join(allowed_patterns)})")
 
     def __contains__(self, x: str) -> bool:
@@ -365,7 +383,7 @@ class TrainingVarSpec(SpecUnit, name = 'training_var', allowed_values = Training
 class TrainingSpec(SpecComplex, name = 'training', value_types = [LayerSpec, FrozenSpec, TrainingDatasetSpec, TrainingVarSpec], optional = TrainingVarSpec, multiple = [LayerSpec, TrainingVarSpec]):
     """Specification for model trainings."""
 
-    layer: LayerSpec
+    layer: LayerSpec | tuple[LayerSpec, ...]
     frozen: FrozenSpec
     training_dataset: TrainingDatasetSpec
     training_var: TrainingVarSpec | None | tuple[TrainingVarSpec, ...]
@@ -401,22 +419,39 @@ class PoolingSpec(SpecComplex, name = 'pooling', value_types = [PoolingMethodSpe
 class ModelSpec(SpecComplex, name = 'model', value_types = [BaseModelSpec, TrainingSpec], multiple = TrainingSpec):
     """Specification for models."""
 
-    model: BaseModelSpec
+    base: BaseModelSpec
     training: TrainingSpec | tuple[TrainingSpec, ...]
+    
+    @property
+    def needs_pooling(self) -> bool:
+        """Does the specified model need pooling?"""
+
+        return self.output_layer.value != 'class'
+
+    @property
+    def layers(self) -> tuple[BaseModelSpec, *tuple[LayerSpec, ...]]:
+        """Returns the base model and additional layers from training."""
+
+        _layers: list[LayerSpec] = []
+
+        if isinstance(self.training, Sequence):
+            training = self.training
+        else:
+            training = [self.training]
+
+        for training_i in training:
+            if isinstance(training_i.layer, Sequence):
+                _layers.extend(list(training_i.layer))
+            else:
+                _layers.append(training_i.layer)
+
+        return (self.base, *_layers)
 
     @property
     def output_layer(self) -> LayerSpec:
         """The specification of the final layer in the model."""
 
-        if isinstance(self.training, Sequence):
-            _output_layer = self.training[-1].layer
-        else:
-            _output_layer = self.training.layer
-
-        if isinstance(_output_layer, Sequence):
-            return _output_layer[-1]
-        else:
-            return _output_layer
+        return self.layers[-1]
     
     @property
     def output_dataset(self) -> TrainingDatasetSpec:
@@ -443,4 +478,20 @@ class ProbabilitySpec(SpecComplex, name = 'probability', value_types = [ModelSpe
     
     model: ModelSpec
     pooling: PoolingSpec | None
+    test_dataset: TestDatasetSpec
+
+    @classmethod
+    def allows(cls, value) -> bool:
+        if super().allows(value):
+            value = cls.ValueTuple(*value)
+            model: ModelSpec = value.model
+            pooling: PoolingSpec | None = value.pooling
+            return not (model.needs_pooling and not pooling)
+        else:
+            return False
+    
+class HumanProbabilitySpec(SpecComplex, name = 'human_probability', value_types = [HumanSpec, TestDatasetSpec]):
+    """Specification of probabilities for humans."""
+
+    humans: HumanSpec
     test_dataset: TestDatasetSpec

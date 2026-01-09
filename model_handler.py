@@ -1,23 +1,83 @@
+"""
+Contains the Model class, which includes tools for everything
+between loading a model and getting its (properly-shaped) logits
+with an accompanying vocabulary. Uses the Spec framework to
+manage the relevant specifications.
+"""
+
+from spec import ModelSpec, BaseModelSpec, LayerSpec, _SEPARATOR
+from model_architecture import Wav2Vec2WithAttentionClassifier, Wav2Vec2ForCTCWithTransformer, Wav2Vec2ForCTCWithAttentionClassifier, Wav2Vec2ForCTCWithTransformerL2
 import pandas, numpy
 import scipy
 import sklearn
 import seaborn.objects
 import torch
 import json
-from transformers import Wav2Vec2Config, AutoModel, Wav2Vec2FeatureExtractor
+from transformers import Wav2Vec2ForCTC, Wav2Vec2Config, AutoModel, Wav2Vec2FeatureExtractor
 from transformers.modeling_utils import PreTrainedModel
-from model_architecture import Wav2Vec2WithAttentionClassifier
 from datasets import Dataset
 from typing import Union, Self, Optional, Any, Callable
 import seaborn
 import matplotlib.pyplot as plt
 import collections
 
-model_dir = '../models'
-model_name = 'm_w2v2_attn_class_2_timitEV'
+_MODEL_PATH = '../models/'
+_MODEL_PREFIX = 'm'
 
-model = Wav2Vec2WithAttentionClassifier.from_pretrained(f'{model_dir}/{model_name}')
-feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(f'{model_dir}/{model_name}')
+class Model():
+    """
+    Uses ModelSpec to load and parse models.
+    Will ultimately partially automate the process
+    of training new models if it cannot find them.
+    """
+
+    spec: ModelSpec
+    model: PreTrainedModel
+    vocab: dict[str, int]
+
+    def __init__(self, spec: str | ModelSpec):
+        self.spec = ModelSpec(spec)
+        self.model = self.load_model()
+        self.vocab = self.get_model_vocab()
+    
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.model(*args, **kwargs)
+    
+    def get_model_class(self) -> type[PreTrainedModel]:
+        """
+        Given the layers of the model specification, returns the appropriate
+        Huggingface model class.
+        """
+
+        layers = self.spec.layers
+        if layers[0].architecture == 'Wav2Vec2':
+            if len(layers) >= 2 and layers[1].value == 'ctc':
+                if len(layers) == 2:
+                    return Wav2Vec2ForCTC
+                elif len(layers) == 4 and layers[2].value == 'attn' and layers[3].value == 'class':
+                    return Wav2Vec2ForCTCWithAttentionClassifier
+            elif len(layers) == 3 and layers[1].value == 'attn' and layers[2].value == 'class':
+                return Wav2Vec2WithAttentionClassifier
+            elif len(layers) >= 3 and layers[1].value == 'transformer' and layers[2].value == 'ctc':
+                if len(layers) == 3:
+                    return Wav2Vec2ForCTCWithTransformer
+                elif len(layers) == 4 and layers[3].value == 'ctc':
+                    raise NotImplementedError("Loading function can't handle passing kwargs yet, which are required here.")
+                    return Wav2Vec2ForCTCWithTransformerL2
+        raise NotImplementedError(f"Model architecture for {layers} unknown.")
+
+    def load_model(self, path: str = _MODEL_PATH, prefix = _MODEL_PREFIX) -> PreTrainedModel:
+        """Loads a model given a specification."""
+
+        model_class = self.get_model_class()
+        return model_class.from_pretrained(f'{path}{prefix}{_MODEL_PREFIX}{_SEPARATOR}{self.spec}')
+
+    def get_model_vocab(self, path: str = _MODEL_PATH, prefix = _MODEL_PREFIX) -> dict[str, int]:
+        """Loads a model's vocabulary given a specification."""
+
+        with open(f'{path}{prefix}{_SEPARATOR}{self.spec}', encoding = 'utf-8') as f:
+            vocab = json.load(f)
+        return vocab
 
 def ctc_wrapper(model: PreTrainedModel, **kwargs) -> Callable[[torch.Tensor], dict[str, torch.Tensor]]:
     """
@@ -46,22 +106,6 @@ def centre_probabilities(batch):
     centre_logits = logits[centre-1:centre+2].mean(0, keepdim = True)
     batch['probabilities'] = torch.nn.functional.softmax(centre_logits, dim=-1)[0][:63] # remove <pad>
     return batch
-
-def pool(probabilities: pandas.DataFrame, *args: str, **kwargs: Any) -> pandas.DataFrame:
-    """
-    Returns a pivot table in wide format.
-    
-    Args:
-        *args: Columns to pool across.
-        **kwargs: Columns to filter by.
-    """
-
-    if kwargs:
-        filter = zip(*[probabilities[column] == value for column, value in kwargs.items()])
-        probabilities = probabilities[[all(row) for row in filter]]
-    
-    pooled_probabilities = probabilities.pivot_table(values = 'probabilities', columns = 'classification', index = args, sort = False)
-    return pooled_probabilities
 
 def audio_to_input_values(dataset: Dataset, feature_extractor):
     """Removes 'audio' column and adds an 'input_values' column using feature_extractor."""
@@ -173,16 +217,7 @@ def diffmap(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame
     
 
 
-def heatmap(probabilities: Union[pandas.DataFrame, list[pandas.DataFrame]], *args: str, **kwargs: Any):
-    """Uses pool to create a seaborn heatmap."""
-    if isinstance(probabilities, list):
-        seaborn.heatmap(pool(probabilities[0], *args, **kwargs), cmap = 'crest', square = True)
-        for probability in probabilities[1:]:
-            plt.figure()
-            seaborn.heatmap(pool(probability, *args, **kwargs), cmap = 'crest', square = True)
-    else:
-        seaborn.heatmap(pool(probabilities, *args, **kwargs), cmap = 'crest', square = True)
-    plt.show()
+
 
 def ctc_beam_search_cvc(logits, consonant_ids: list[int], vowel_id2label: dict[int, str], padding_token_id: int, beam_width: int = 1):
     """Custom CTC beam search that looks for a CVC sequence."""
