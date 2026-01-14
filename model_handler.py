@@ -5,7 +5,7 @@ with an accompanying vocabulary. Uses the Spec framework to
 manage the relevant specifications.
 """
 
-from spec import ModelSpec, BaseModelSpec, LayerSpec, _SEPARATOR
+from spec import ModelSpec, BaseSpec, LayerSpec, TrainingSpec, _SEPARATOR
 from model_architecture import Wav2Vec2WithAttentionClassifier, Wav2Vec2ForCTCWithTransformer, Wav2Vec2ForCTCWithAttentionClassifier, Wav2Vec2ForCTCWithTransformerL2
 import pandas, numpy
 import scipy
@@ -32,24 +32,27 @@ class Model():
     """
 
     spec: ModelSpec
+    path: str
     model: PreTrainedModel
     vocab: dict[str, int]
 
-    def __init__(self, spec: str | ModelSpec):
+    def __init__(self, spec: str | ModelSpec, path: str | None = None):
         self.spec = ModelSpec(spec)
+        self.path = path if path else f'{_MODEL_PATH}{_MODEL_PREFIX}{_SEPARATOR}{self.spec}'
         self.model = self.load_model()
         self.vocab = self.get_model_vocab()
     
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self.model(*args, **kwargs)
     
-    def get_model_class(self) -> type[PreTrainedModel]:
+    @classmethod
+    def get_model_class(cls, spec: ModelSpec) -> type[PreTrainedModel]:
         """
         Given the layers of the model specification, returns the appropriate
         Huggingface model class.
         """
 
-        layers = self.spec.layers
+        layers = spec.layers
         if layers[0].architecture == 'Wav2Vec2':
             if len(layers) >= 2 and layers[1].value == 'ctc':
                 if len(layers) == 2:
@@ -66,18 +69,31 @@ class Model():
                     return Wav2Vec2ForCTCWithTransformerL2
         raise NotImplementedError(f"Model architecture for {layers} unknown.")
 
-    def load_model(self, path: str = _MODEL_PATH, prefix = _MODEL_PREFIX) -> PreTrainedModel:
+    def load_model(self) -> PreTrainedModel:
         """Loads a model given a specification."""
 
-        model_class = self.get_model_class()
-        return model_class.from_pretrained(f'{path}{prefix}{_MODEL_PREFIX}{_SEPARATOR}{self.spec}')
+        model_class = self.get_model_class(self.spec)
+        return model_class.from_pretrained(self.path)
 
-    def get_model_vocab(self, path: str = _MODEL_PATH, prefix = _MODEL_PREFIX) -> dict[str, int]:
+    def get_model_vocab(self) -> dict[str, int]:
         """Loads a model's vocabulary given a specification."""
 
-        with open(f'{path}{prefix}{_SEPARATOR}{self.spec}', encoding = 'utf-8') as f:
+        with open(self.path + '/vocab.json', encoding = 'utf-8') as f:
             vocab = json.load(f)
         return vocab
+    
+    def add_layer(self, layer_spec: str | LayerSpec | tuple[LayerSpec, ...]) -> PreTrainedModel:
+        """
+        Given a new layer, loads and returns a model with the layer added.
+        """
+
+        if isinstance(layer_spec, tuple):
+            layer_spec = _SEPARATOR.join(str(layer_spec_i) for layer_spec_i in layer_spec)
+        
+        new_spec = f'{self.spec}{_SEPARATOR}{layer_spec}'
+        model_class = self.get_model_class(ModelSpec(new_spec))
+        return model_class.from_pretrained(self.path)
+
 
 def ctc_wrapper(model: PreTrainedModel, **kwargs) -> Callable[[torch.Tensor], dict[str, torch.Tensor]]:
     """

@@ -22,29 +22,36 @@ class TrainingDataset():
     """
 
     spec: TrainingDatasetSpec
+    path: str
     dataset: Dataset | DatasetDict | IterableDataset | IterableDatasetDict
     vocab: dict[str, int]
     consonants: list[str]
     vowels: list[str]
 
-    def __init__(self, spec: str | TrainingDatasetSpec):
+    def __init__(self, spec: str | TrainingDatasetSpec, path: str | None = None):
         self.spec = TrainingDatasetSpec(spec)
-        self.dataset = load_dataset(self.spec)
-        self.vocab = get_dataset_vocab(self.spec)
+        self.path = path if path else f'{_DATASET_PATH}{_DATASET_PREFIX}{_SEPARATOR}{spec}'
+        self.dataset = self.load_dataset()
+        self.vocab = self.get_dataset_vocab()
         self.consonants = get_consonants(self.spec)
         self.vowels = get_vowels(self.spec)
-
-def load_dataset(spec: str | TrainingDatasetSpec, path = _DATASET_PATH, prefix = _DATASET_PREFIX) -> Dataset | DatasetDict | IterableDataset | IterableDatasetDict:
-    """Loads a dataset given its specification."""
     
-    return datasets.load_from_disk(f'{path}{prefix}{_SEPARATOR}{spec}')
+    @property
+    def vocab_path(self) -> str:
+        return self.path + '/vocab.json'
 
-def get_dataset_vocab(spec: str | TrainingDatasetSpec, path = _DATASET_PATH, prefix = _DATASET_PREFIX) -> dict[str, int]:
-    """Loads a dataset's vocabulary given its specification."""
+    def load_dataset(self) -> Dataset | DatasetDict | IterableDataset | IterableDatasetDict:
+        """Loads a dataset given its specification."""
+        
+        return datasets.load_from_disk(self.path)
 
-    with open(f'{path}{prefix}{_SEPARATOR}{spec}', encoding = 'utf-8') as f:
-        vocab = json.load(f)
-    return vocab
+
+    def get_dataset_vocab(self) -> dict[str, int]:
+        """Loads a dataset's vocabulary given its specification."""
+
+        with open(self.vocab_path, encoding = 'utf-8') as f:
+            vocab = json.load(f)
+        return vocab
 
 consonants = {
     'timit': ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh'],
@@ -566,50 +573,3 @@ def _get_vocab_dict(dataset: DatasetDict, text_column: str) -> dict[str, int]:
     vocab_list.extend(['|', '<unk>', '<pad>']) # special tokens
     vocab_dict = {v: k for k, v in enumerate(vocab_list)}
     return vocab_dict
-
-
-        
-
-# class DatasetLoader:
-#     """A wrapper for info needed to dynamically load and prepare a dataset or multiple datasets.
-
-#     Attributes:
-#         name: A string or list of strings
-#     """
-
-#     def __init__(self, name: Union[str, List[str]], data_dir: Optional[str] = None, from_disk = False):
-#         self.name = name
-#         self.from_disk = True
-
-
-def prepare(dataset: Union[Dataset, DatasetDict], input: Union[str, list[str]], output: Union[str, list[str]]) -> Union[Dataset, DatasetDict, IterableDataset, IterableDatasetDict]:
-    """Prepares a Dataset for training.
-
-    Given a Dataset, it prepares the desired inputs and outputs
-    in a valid format for training.
-
-    Args:
-        dataset: The dataset to prepare.
-        input: The column containing the input values. A list of
-            strings is treated as a nested column.
-        output: The column containing the output values. A list
-            of strings is treated as a nested column.
-        TODO:
-        input_map: A function applied to input values...
-    
-    Returns:
-        A prepared dataset with two columns: 'input_values' and
-        'labels'.
-    """
-
-    if isinstance(input, str):
-        input = [input]
-    
-    if isinstance(output, str):
-        output = [output]
-
-    columns_to_remove: list[str] = [column_name for column_name in dataset.column_names if column_name not in input[0] and column_name not in output[0]]
-    dataset = dataset.remove_columns(columns_to_remove)
-
-    return dataset
-

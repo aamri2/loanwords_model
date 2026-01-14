@@ -1,69 +1,11 @@
-from spec import ProbabilitySpec, HumanProbabilitySpec, TestDatasetSpec, _SEPARATOR
+from spec import ProbabilitySpec, HumanProbabilitySpec, _SEPARATOR
+from test_dataset_handler import TestDataset
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
 
 _PROBABILITIES_PATH = 'probabilities/'
 _PROBABILITIES_PREFIX = 'p'
-
-_WV_DATA_PATH = 'WorldVowels_stimuli.csv'
-_WV_FORMANTS_PATH = '../stimuli_world_vowels/formants/world_vowels_formants.csv'
-
-def load_wv_data(path = _WV_DATA_PATH) -> pd.DataFrame:
-    """Loads and prepares WV data for use as a test dataset."""
-
-    return pd.read_csv(path).rename({'index': 'file'}, axis = 1)
-
-def load_wv_formants(dataset: 'TestDataset') -> pd.DataFrame:
-    """Loads and prepares WV formants in a DataFrame."""
-
-    formants = pd.read_csv(_WV_FORMANTS_PATH)
-    formants['F1_norm'] = formants['F1'] / formants['F3']
-    formants['F2_norm'] = formants['F2'] / formants['F3']
-    formants = formants.set_index('file')
-    return formants
-
-def load_wv_contexts(dataset: 'TestDataset') -> pd.DataFrame:
-    """Loads and prepares WV contexts in a DataFrame."""
-
-    contexts = dataset.dataset.loc[:, ['file', 'prev_phone', 'next_phone', 'context']]
-    contexts = contexts.set_index('file')
-    return contexts
-
-class TestDataset():
-    """Uses TestDatasetSpec to load and prepare test datasets."""
-
-    spec: TestDatasetSpec
-    dataset: pd.DataFrame
-    _test_dataset_loader = {'wv': load_wv_data}
-    formants: pd.DataFrame
-    _formant_loader = {'wv': load_wv_formants}
-    contexts: pd.DataFrame
-    _context_loader = {'wv': load_wv_contexts}
-
-    def __init__(self, spec: str | TestDatasetSpec):
-        self.spec = TestDatasetSpec(spec)
-        self.dataset = self.load_dataset()
-        self.formants = self.load_formants()
-        self.contexts = self.load_contexts()
-
-    def load_dataset(self):
-        try:
-            return self._test_dataset_loader[self.spec.value]()
-        except KeyError:
-            raise NotImplementedError(f"Cannot load test dataset {self.spec}.")
-    
-    def load_formants(self) -> pd.DataFrame:
-        try:
-            return self._formant_loader[self.spec.value](self)
-        except KeyError:
-            raise NotImplementedError(f"Cannot load formants for test dataset {self.spec}.")
-    
-    def load_contexts(self) -> pd.DataFrame:
-        try:
-            return self._context_loader[self.spec.value](self)
-        except KeyError:
-            raise NotImplementedError(f"Cannot load contexts for test dataset {self.spec}.")
 
 class Probabilities():
     """
@@ -143,7 +85,6 @@ class Probabilities():
     
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}({repr(str(self.spec))})'
-
     
 class HumanProbabilities(Probabilities):
     spec: HumanProbabilitySpec

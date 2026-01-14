@@ -4,7 +4,7 @@ Provides the Spec family of classes, which provide all the relevant specificatio
 Also provides some convenience methods for automatically parsing specifications from strings.
 """
 
-from typing import Sequence, Self, Container, NamedTuple, TypeVar, cast, Generic
+from typing import Sequence, Self, Container, NamedTuple, TypeVar, cast, Generic, Mapping
 from collections.abc import Collection
 from abc import ABC, abstractmethod, ABCMeta
 from collections import defaultdict, namedtuple
@@ -19,7 +19,7 @@ class SpecMeta(ABCMeta):
 
     name: str
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name
     
     def __hash__(self) -> int:
@@ -42,6 +42,7 @@ class Spec(ABC, Generic[T], metaclass=SpecMeta):
     def value(self) -> T:
         ...
 
+    @abstractmethod
     def __init__(self, *args, **kwargs):
         """Value must be allowed by the specification."""
         
@@ -68,7 +69,7 @@ class Spec(ABC, Generic[T], metaclass=SpecMeta):
         """Implementations should pass values as string arguments."""
         
         return _SEPARATOR.join(args)
-        
+
 class SpecUnit(Spec[str]):
     """
     Inherited classes allow a simple string value from a constant set of values. Values may not contain the separator.
@@ -318,7 +319,7 @@ class SpecComplex(Spec[Sequence[Spec | Sequence[Spec] | None]]):
                     value[value_name] = subvalue[0]
             return cls(value = None, **value) # typing complains if value not specified
 
-class BaseModelSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr']):
+class BaseSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr']):
     """Specification unit for base models."""
 
     @property
@@ -416,10 +417,10 @@ class PoolingSpec(SpecComplex, name = 'pooling', value_types = [PoolingMethodSpe
         else:
             return False
 
-class ModelSpec(SpecComplex, name = 'model', value_types = [BaseModelSpec, TrainingSpec], multiple = TrainingSpec):
+class ModelSpec(SpecComplex, name = 'model', value_types = [BaseSpec, TrainingSpec], multiple = TrainingSpec):
     """Specification for models."""
 
-    base: BaseModelSpec
+    base: BaseSpec
     training: TrainingSpec | tuple[TrainingSpec, ...]
     
     @property
@@ -429,7 +430,7 @@ class ModelSpec(SpecComplex, name = 'model', value_types = [BaseModelSpec, Train
         return self.output_layer.value != 'class'
 
     @property
-    def layers(self) -> tuple[BaseModelSpec, *tuple[LayerSpec, ...]]:
+    def layers(self) -> tuple[BaseSpec, *tuple[LayerSpec, ...]]:
         """Returns the base model and additional layers from training."""
 
         _layers: list[LayerSpec] = []

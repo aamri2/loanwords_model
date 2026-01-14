@@ -1,40 +1,8 @@
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, overload
 from spec import TestDatasetSpec, ProbabilitySpec, HumanProbabilitySpec, _SEPARATOR
-from probabilities_handler import Probabilities, HumanProbabilities, TestDataset, _PROBABILITIES_PATH, _PROBABILITIES_PREFIX
+from probabilities_handler import Probabilities, HumanProbabilities, _PROBABILITIES_PATH, _PROBABILITIES_PREFIX
 import glob
 import warnings
-
-class TestDatasetMap(Mapping):
-    """Mapping for test datasets."""
-
-    def __init__(self, map=()):
-        self._map = dict(map)
-
-    def __getitem__(self, key: str | TestDatasetSpec | Sequence[str | TestDatasetSpec]):
-        if not (isinstance(key, (str, TestDatasetSpec)) or (isinstance(key, Sequence) and all(isinstance(k, (str, TestDatasetSpec)) for k in key))):
-            raise TypeError('Probability specification must be a string or list of strings!')
-        
-        if isinstance(key, Sequence):
-            return [self.__getitem__(k) for k in key]
-        
-        key = str(key)
-        if key not in self._map.keys():
-            return self.__missing__(key)
-        
-        return self._map[key]
-
-    def __missing__(self, key: str):
-        try:
-            self._map[key] = TestDataset(key)
-            return self._map[key]
-        except FileNotFoundError:
-            raise NotImplementedError(f'Cannot dynamically create test dataset {key}.')
-    
-    def __iter__(self):
-        return iter(self._map)
-    
-    def __len__(self):
-        return len(self._map)
 
 class ProbabilitiesMap(Mapping):
     """
@@ -44,12 +12,13 @@ class ProbabilitiesMap(Mapping):
     """
     
     def __init__(self, map = (), autoload = False):
-        self._map = dict(map)
+        self._map: dict[str | ProbabilitySpec | HumanProbabilitySpec, Probabilities] = dict(map)
         
         if autoload:
             self.autoload_probabilities()
 
-    def load(self, spec: str) -> None:
+    def load(self, spec: str | ProbabilitySpec | HumanProbabilitySpec) -> None:
+        spec = str(spec)
         try:
             self._map[spec] = Probabilities(spec)
         except (ValueError, NotImplementedError):
@@ -58,19 +27,25 @@ class ProbabilitiesMap(Mapping):
             except (ValueError, NotImplementedError):
                 raise ValueError(f"Invalid probability spec: {spec}.")
 
-    def __getitem__(self, key: str | ProbabilitySpec | HumanProbabilitySpec | list[str]):
-        if not isinstance(key, str) or isinstance(key, list) and all(isinstance(k, str) for k in key):
-            raise TypeError('Probability specification must be a string or list of strings!')
-        
-        if isinstance(key, list):
-            return [self.__getitem__(k) for k in key]
+    @overload
+    def __getitem__(self, key: str | ProbabilitySpec) -> Probabilities: ...
+    @overload
+    def __getitem__(self, key: str | HumanProbabilitySpec) -> HumanProbabilities: ...
+    @overload
+    def __getitem__(self, key: Sequence[str | ProbabilitySpec | HumanProbabilitySpec]) -> list[Probabilities | HumanProbabilities]: ...
+    def __getitem__(self, key: str | ProbabilitySpec | HumanProbabilitySpec | Sequence[str | ProbabilitySpec | HumanProbabilitySpec]) -> Probabilities | HumanProbabilities | list[Probabilities | HumanProbabilities]:
+        if not isinstance(key, (str, ProbabilitySpec, HumanProbabilitySpec)):
+            if not isinstance(key, Sequence) or any(not isinstance(k, (str, ProbabilitySpec, HumanProbabilitySpec)) for k in key):
+                raise TypeError('Probability specification must be a string or list of strings!')
+            elif isinstance(key, Sequence):
+                return [self.__getitem__(k) for k in key]
         
         if key not in self._map.keys():
             return self.__missing__(key)
         
         return self._map[key]
 
-    def __missing__(self, key: str):
+    def __missing__(self, key: str | ProbabilitySpec | HumanProbabilitySpec):
         try:
             self.load(key)
             return self._map[key]
