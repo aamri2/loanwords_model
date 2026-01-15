@@ -1,12 +1,38 @@
 from spec import TestDatasetSpec
+from model_handler import Model
+from dataset_handler import audio_to_input_values
+from base_model_handler import Base
 import pandas as pd
 from typing import Mapping, Sequence
+from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict, Audio
+from transformers import Wav2Vec2FeatureExtractor
+from functools import cache
 
-_WV_DATA_PATH = 'WorldVowels_stimuli.csv'
+_WV_AUDIO_PATH = '../stimuli_world_vowels/'
+_WV_METADATA_PATH = 'WorldVowels_stimuli.csv'
 _WV_FORMANTS_PATH = '../stimuli_world_vowels/formants/world_vowels_formants.csv'
 
-def load_wv_data(path = _WV_DATA_PATH) -> pd.DataFrame:
-    """Loads and prepares WV data for use as a test dataset."""
+def load_wv_dataset(path = _WV_AUDIO_PATH) -> Dataset:
+    """Loads and prepares WV Dataset for use as a test dataset (without labels)."""
+    
+    metadata = pd.read_csv(_WV_METADATA_PATH)
+    with open(path + 'audio_files.txt') as f:
+        files = f.readlines()
+    files = [file.strip() for file in files]
+    metadata = metadata[metadata['#file_extract'].isin(files)]
+    dataset = Dataset.from_dict({
+        'audio': [f'{path}{file}' for file in metadata['#file_extract'] if file in files],
+        'language': metadata['language'],
+        'vowel': metadata['#phone'],
+        'file': metadata['index']
+    }).cast_column('audio', Audio())
+
+    dataset = audio_to_input_values(dataset, Wav2Vec2FeatureExtractor())
+
+    return dataset
+
+def load_wv_metadata(path = _WV_METADATA_PATH) -> pd.DataFrame:
+    """Loads and prepares WV metadata for use as a test dataset."""
 
     return pd.read_csv(path).rename({'index': 'file'}, axis = 1)
 
@@ -22,7 +48,7 @@ def load_wv_formants(dataset: 'TestDataset') -> pd.DataFrame:
 def load_wv_contexts(dataset: 'TestDataset') -> pd.DataFrame:
     """Loads and prepares WV contexts in a DataFrame."""
 
-    contexts = dataset.dataset.loc[:, ['file', 'prev_phone', 'next_phone', 'context']]
+    contexts = dataset.metadata.loc[:, ['file', 'prev_phone', 'next_phone', 'context']]
     contexts = contexts.set_index('file')
     return contexts
 
@@ -30,24 +56,33 @@ class TestDataset():
     """Uses TestDatasetSpec to load and prepare test datasets."""
 
     spec: TestDatasetSpec
-    dataset: pd.DataFrame
-    _test_dataset_loader = {'wv': load_wv_data}
+    dataset: Dataset
+    metadata: pd.DataFrame
     formants: pd.DataFrame
-    _formant_loader = {'wv': load_wv_formants}
     contexts: pd.DataFrame
+    _dataset_loader = {'wv': load_wv_dataset}
+    _metadata_loader = {'wv': load_wv_metadata}
+    _formant_loader = {'wv': load_wv_formants}
     _context_loader = {'wv': load_wv_contexts}
 
     def __init__(self, spec: str | TestDatasetSpec):
         self.spec = TestDatasetSpec(spec)
         self.dataset = self.load_dataset()
+        self.metadata = self.load_metadata()
         self.formants = self.load_formants()
         self.contexts = self.load_contexts()
 
-    def load_dataset(self):
+    def load_dataset(self) -> Dataset:
         try:
-            return self._test_dataset_loader[self.spec.value]()
+            return self._dataset_loader[self.spec.value]()
         except KeyError:
             raise NotImplementedError(f"Cannot load test dataset {self.spec}.")
+
+    def load_metadata(self) -> pd.DataFrame:
+        try:
+            return self._metadata_loader[self.spec.value]()
+        except KeyError:
+            raise NotImplementedError(f"Cannot load metadata for test dataset {self.spec}.")
     
     def load_formants(self) -> pd.DataFrame:
         try:

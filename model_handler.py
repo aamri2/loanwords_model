@@ -20,6 +20,7 @@ from typing import Union, Self, Optional, Any, Callable
 import seaborn
 import matplotlib.pyplot as plt
 import collections
+from base_model_handler import Base
 
 _MODEL_PATH = '../models/'
 _MODEL_PREFIX = 'm'
@@ -97,6 +98,22 @@ class Model():
         model_class = self.get_model_class(ModelSpec(new_spec))
         return model_class.from_pretrained(self.path)
 
+    def as_map(self) -> Callable:
+        """Returns a map function that adds logits to a dataset with an 'audio' column."""
+
+        feature_extractor = Base(self.spec.base).feature_extractor
+
+        def apply_model(batch):
+            with torch.no_grad():
+                if 'audio' in batch:
+                    audio = batch['audio']
+                else:
+                    audio = batch['input_values']
+                input = feature_extractor(audio, sampling_rate=16000, return_tensors='pt', padding=True)
+                batch['logits'] = self.model(**input).logits
+                return batch
+        
+        return apply_model
 
 def ctc_wrapper(model: PreTrainedModel, **kwargs) -> Callable[[torch.Tensor], dict[str, torch.Tensor]]:
     """
@@ -126,20 +143,9 @@ def centre_probabilities(batch):
     batch['probabilities'] = torch.nn.functional.softmax(centre_logits, dim=-1)[0][:63] # remove <pad>
     return batch
 
-def audio_to_input_values(dataset: Dataset, feature_extractor):
-    """Removes 'audio' column and adds an 'input_values' column using feature_extractor."""
-
-    def _generate_input_values(batch):
-        audio = batch['audio']
-        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
-        return batch
-
-    dataset = dataset.map(_generate_input_values, remove_columns = 'audio')
-    return dataset
-
 def probabilities(model, dataset: Dataset, id2label = None, **kwargs):
     """Create DataFrame in long format containing classification probabilities"""
-
+    
     column_names = [column_name for column_name in dataset.column_names if column_name != 'input_values']
 
     data = {
@@ -149,7 +155,7 @@ def probabilities(model, dataset: Dataset, id2label = None, **kwargs):
     }
     if not id2label:
         id2label = model.config.id2label if model.config.id2label else {}
-    
+
     for row in dataset.to_iterable_dataset():
         with torch.no_grad():
             input_values = torch.tensor(row['input_values']).unsqueeze(0)
@@ -329,13 +335,3 @@ def ctc_cvc_wrapper(model: PreTrainedModel, consonant_ids: list[int], vowel_id2l
             return {'logits': logits}
 
     return ModelWrapper(vowel_id2label)
-
-def model_to_map(model, processor) -> Callable:
-    """Takes a model and a processor, and returns a map function that adds logits to a prepared dataset."""
-
-    def apply_model(batch):
-        input = processor(batch['input_values'], sampling_rate=16000, return_tensors='pt', padding=True)
-        batch['logits'] = model(**input).logits
-        return batch
-    
-    return apply_model

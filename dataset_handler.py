@@ -3,11 +3,13 @@ from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict,
 import datasets
 import json
 import pandas as pd
-from typing import Union, cast
+from typing import cast, Protocol
 from collections.abc import Callable
 import phonemizer.separator
 import torch
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2CTCTokenizer, Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2PhonemeCTCTokenizer
+from transformers.feature_extraction_sequence_utils import SequenceFeatureExtractor
+from transformers.feature_extraction_utils import BatchFeature
 import phonemizer
 from pyacoustics.speech_filters import speech_shaped_noise
 import numpy as np
@@ -601,3 +603,14 @@ def _get_vocab_dict(dataset: Dataset | DatasetDict | IterableDataset | IterableD
     vocab_list.extend(['|', '<unk>', '<pad>']) # special tokens
     vocab_dict = {v: k for k, v in enumerate(vocab_list)}
     return vocab_dict
+
+def audio_to_input_values(dataset: Dataset, feature_extractor) -> Dataset:
+    """Removes 'audio' column and adds an 'input_values' column using feature_extractor."""
+
+    def _generate_input_values(batch):
+        audio = batch['audio']
+        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
+        return batch
+
+    dataset = dataset.map(_generate_input_values, remove_columns = 'audio')
+    return dataset
