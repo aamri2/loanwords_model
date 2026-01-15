@@ -2,8 +2,8 @@ from spec import TrainingDatasetSpec, _SEPARATOR
 from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict, load_from_disk
 import datasets
 import json
-import pandas
-from typing import Optional, Union
+import pandas as pd
+from typing import Union, cast
 from collections.abc import Callable
 import phonemizer.separator
 import torch
@@ -224,10 +224,36 @@ def prepare_timitMV_w2v2():
     
     return throughPretrainedModel(timit, model)
 
+def prepare_wvResponses():
+    """Prepares World Vowels stimuli with individual responses as classifications."""
+    
+    human_responses = pd.read_csv('../human_vowel_responses.csv')
+    human_responses = human_responses[human_responses['language_indiv'] == 'english']
+
+    wvResponses = Dataset.from_dict({
+        'audio': [f'../stimuli_world_vowels/{file}.wav' for file in human_responses['filename']],
+        'label': human_responses['assimilation'],
+        'vowel_language': [f'{vowel}_{language}' for vowel, language in zip(human_responses['#phone'], human_responses['language_stimuli'])],
+    }).cast_column('audio', datasets.Audio()).class_encode_column('label').class_encode_column('vowel_language')
+    
+    wvResponses_split = wvResponses.train_test_split(0.2, 0.8, stratify_by_column = 'vowel_language')
+    wvResponses_test_dev = wvResponses_split['test'].train_test_split(0.5, 0.5, stratify_by_column = 'vowel_language')
+    wvResponses = DatasetDict({'train': wvResponses_split['train'], 'test': wvResponses_test_dev['train'], 'dev': wvResponses_test_dev['test']})
+
+    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+
+    def prepare_dataset(batch):
+        audio = batch['audio']
+        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
+        return batch
+
+    prep_wvResponses = wvResponses.map(prepare_dataset, remove_columns=['audio', 'vowel_language'])
+    return prep_wvResponses
+
 def prepare_wvEN():
     """Prepares World Vowels English stimuli."""
     
-    wv = pandas.read_csv('WorldVowels_stimuli.csv')
+    wv = pd.read_csv('WorldVowels_stimuli.csv')
     files = ['../wv/' + i for i in wv[wv['language'] == 'EN']['#file_extract']]
     phone = list(wv[wv['language'] == 'EN']['#phone'])
     wvEN = Dataset.from_dict({'audio': files, 'labels': phone}, split=datasets.Split.TRAIN)\
@@ -320,7 +346,7 @@ def prepare_bl_ctc(aligned = False) -> tuple[datasets.DatasetDict, dict[str, int
 
 def prepare_targets():
     """Extracts TIMIT syllables into a dataset, which is prepared for training."""
-    timit = datasets.load_dataset('timit_asr', data_dir='../timit/TIMIT')
+    timit = cast(DatasetDict, datasets.load_dataset('timit_asr', data_dir='../timit/TIMIT'))
     timit = timit.remove_columns(['file', 'word_detail', 'dialect_region', 'sentence_type', 'speaker_id', 'id'])
 
     timit_folding = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er', 'hv': 'hh', 'ix': 'ih', 'el': 'l', 'em': 'm', 'en': 'n', 'nx': 'n', 'eng': 'ng', 'ux': 'uw'} # did not merge zh/sh
@@ -329,7 +355,7 @@ def prepare_targets():
 
     def find_targets(batch):
         # fold phones
-        utterance = [timit_folding.get(phone, phone) for phone in batch['phonetic_detail']['utterance']]
+        utterance = [timit_folding.get(phone, phone) for phone in cast(list[str], batch['phonetic_detail']['utterance'])]
         # positions and labels of all C+VC+ sequences (excluding non-target diphthongs)
         target_indices = [i for i, phone in enumerate(utterance) if phone in target_labels.keys()]
         vowel_indices = [i for i, phone in enumerate(utterance) if phone in timit_vowels]
@@ -378,7 +404,7 @@ def prepare_masked_targets():
     """
     Prepares TIMIT utterances, with additional columns 'sample_start' and 'sample_stop'.
     """
-    timit = datasets.load_dataset('timit_asr', data_dir='../timit/TIMIT')
+    timit = cast(DatasetDict, datasets.load_dataset('timit_asr', data_dir='../timit/TIMIT'))
     timit = timit.remove_columns(['file', 'word_detail', 'dialect_region', 'sentence_type', 'speaker_id', 'id'])
 
     timit_folding = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er', 'hv': 'hh', 'ix': 'ih', 'el': 'l', 'em': 'm', 'en': 'n', 'nx': 'n', 'eng': 'ng', 'ux': 'uw'} # did not merge zh/sh
@@ -387,7 +413,7 @@ def prepare_masked_targets():
 
     def find_targets(batch):
         # fold phones
-        utterance = [timit_folding.get(phone, phone) for phone in batch['phonetic_detail']['utterance']]
+        utterance = [timit_folding.get(phone, phone) for phone in cast(list[str], batch['phonetic_detail']['utterance'])]
         # positions and labels of all C+VC+ sequences (excluding non-target diphthongs)
         target_indices = [i for i, phone in enumerate(utterance) if phone in target_labels.keys()]
         vowel_indices = [i for i, phone in enumerate(utterance) if phone in timit_vowels]
@@ -514,6 +540,8 @@ def prepare_librispeech_ctc(classic=False, word_boundaries=False):
         librispeech = librispeech.remove_columns(
             ['original_path', 'begin_time', 'end_time', 'audio_duration', 'speaker_id', 'book_id']
         )
+    
+    librispeech = cast(DatasetDict, librispeech)
 
     folding = {'ə': 'ʌ', 'ɐ': 'ʌ', 'ᵻ': 'ɪ', 'əl': 'l', 'ɚ': 'ɹ', 'n̩': 'n', 'ææ': 'æ', 'ɑ̃': 'ɑ', 'o': 'oʊ', 'x': 'k', 'r': 'ɹ'}
 
@@ -549,7 +577,7 @@ def prepare_librispeech_ctc(classic=False, word_boundaries=False):
 
     return librispeech, vocab_dict
 
-def _get_vocab_dict(dataset: DatasetDict, text_column: str) -> dict[str, int]:
+def _get_vocab_dict(dataset: Dataset | DatasetDict | IterableDataset | IterableDatasetDict, text_column: str) -> dict[str, int]:
     """
     Given a dataset with splits and transcriptions, returns a vocab_dict.
     

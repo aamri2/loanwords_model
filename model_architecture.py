@@ -5,8 +5,14 @@ from torch import nn
 from transformers import Wav2Vec2PreTrainedModel, Wav2Vec2Model, Wav2Vec2ForCTC, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
 from transformers.feature_extraction_utils import BatchFeature
 from transformers.modeling_outputs import CausalLMOutput
-from typing import Optional, Union, Any
+from transformers.data.data_collator import DataCollatorWithPadding
+from typing import Dict, List, Optional, Union, Any
 from dataclasses import dataclass
+
+# try max pooling on the logits (i.e. maximum per classification over time) and use that
+# to predict the individual participant responses (cf. logistic regression); stratify
+# train/test/val on vowels, but not on individual stimuli! 80/10/10 split?
+
 
 class AttentionPooling(nn.Module):
     """
@@ -34,6 +40,7 @@ class Wav2Vec2WithAttentionClassifier(Wav2Vec2PreTrainedModel):
     """
     Custom Wav2Vec2 sequence classification with a simple attention head.
     """
+    
     def __init__(self, config):
         super().__init__(config)
         self.wav2vec2 = Wav2Vec2Model(config)
@@ -177,6 +184,88 @@ class Wav2Vec2ForCTCWithAttentionClassifier(Wav2Vec2ForCTC):
             loss = loss_fn(logits, labels)
         
         return {'loss': loss, 'logits': logits} if loss is not None else {'logits': logits}
+
+class Wav2Vec2ForCTCWithMaxPooling(Wav2Vec2ForCTC):
+    """Adds a max pooling and classification head to the CTC model base."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.max_pooling = nn.AdaptiveMaxPool1d(1)
+        self.classifier = nn.Linear(config.vocab_size, config.num_labels)
+        self.post_init()
+
+    def freeze_base_model(self): # freeze everything but the classification head
+        """Freezes Wav2Vec2 and CTC layers, so only the attention and classifier get trained."""
+
+        for param in self.wav2vec2.parameters():
+            param.requires_grad = False
+        for param in self.dropout.parameters():
+            param.requires_grad = False
+        for param in self.lm_head.parameters():
+            param.requires_grad = False
+
+    def forward(self,
+        input_values: Optional[torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        labels: Optional[torch.Tensor] = None,
+        frame_mask = None,
+    ):
+
+        outputs = self.wav2vec2(
+            input_values,
+            attention_mask=attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        hidden_states = outputs[0]
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.lm_head(hidden_states)
+
+        if frame_mask is not None:
+            # adjust to actual length from estimate
+            if frame_mask.shape[1] < hidden_states.shape[1]:
+                frame_mask = torch.nn.functional.pad(frame_mask, (0, hidden_states.shape[1] - frame_mask.shape[1]), value = 0.0)
+            elif frame_mask.shape[1] > hidden_states.shape[1]:
+                frame_mask = frame_mask[:, :hidden_states.shape[1]]
+            
+            frame_mask = frame_mask.unsqueeze(-1).type_as(hidden_states)
+            hidden_states = hidden_states * frame_mask
+
+        pooled_output = self.max_pooling(hidden_states.transpose(1, 2)).flatten(1) # by default pools the other way
+        logits = self.classifier(pooled_output)
+        
+
+
+        loss = None
+        if labels is not None:
+            if self.config.problem_type is None:
+                if self.config.num_labels == 1:
+                    self.config.problem_type = "regression"
+                
+                elif self.config.num_labels > 1 and labels.dtype in (torch.long, torch.int):
+                    self.config.problem_type = "single_label_classification"
+                
+                else:
+                    self.config.problem_type = "multi_label_classification"
+            
+
+            if self.config.problem_type == "regression":
+                loss_fn = nn.MSELoss()
+            
+            elif self.config.problem_type == "single_label_classification":
+                loss_fn = nn.CrossEntropyLoss()
+            
+            elif self.config.problem_type == "multi_label_classification":
+                loss_fn = nn.BCEWithLogitsLoss()
+            
+            loss = loss_fn(logits, labels)
+        
+        return {'loss': loss, 'logits': logits} if loss is not None else {'logits': logits}
     
 _HIDDEN_STATES_START_POSITION = 2
 class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
@@ -209,7 +298,7 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
 
     def forward(
         self,
-        input_values: Optional[torch.Tensor],
+        input_values: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -256,7 +345,7 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
             attention_mask = (
                 attention_mask if attention_mask is not None else torch.ones_like(input_values, dtype=torch.long)
             )
-            input_lengths = self._get_feat_extract_output_lengths(attention_mask.sum(-1)).to(torch.long)
+            input_lengths = self._get_feat_extract_output_lengths(attention_mask.sum(-1)).to(torch.long) # type: ignore # can't recognize LongTensor and Tensor interchangeability
 
             # assuming that padded tokens are filled with -100
             # when not being attended to
@@ -283,7 +372,7 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
             return ((loss,) + output) if loss is not None else output
 
         return CausalLMOutput(
-            loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions
+            loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions # type: ignore # can't recognize tensor type
         )
 
 class Wav2Vec2ForCTCWithTransformerL2(Wav2Vec2ForCTCWithTransformer):
@@ -306,12 +395,12 @@ class Wav2Vec2ForCTCWithTransformerL2(Wav2Vec2ForCTCWithTransformer):
 
     def forward(
         self,
-        input_values: Optional[torch.Tensor],
-        attention_mask: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        labels: Optional[torch.Tensor] = None,
+        input_values: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+        labels: torch.Tensor | None = None,
     ):
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, target_length)`, *optional*):
@@ -353,7 +442,7 @@ class Wav2Vec2ForCTCWithTransformerL2(Wav2Vec2ForCTCWithTransformer):
             attention_mask = (
                 attention_mask if attention_mask is not None else torch.ones_like(input_values, dtype=torch.long)
             )
-            input_lengths = self._get_feat_extract_output_lengths(attention_mask.sum(-1)).to(torch.long)
+            input_lengths = self._get_feat_extract_output_lengths(attention_mask.sum(-1)).to(torch.long) # type: ignore # can't tell tensor dtype
 
             # assuming that padded tokens are filled with -100
             # when not being attended to
@@ -380,7 +469,7 @@ class Wav2Vec2ForCTCWithTransformerL2(Wav2Vec2ForCTCWithTransformer):
             return ((loss,) + output) if loss is not None else output
 
         return CausalLMOutput(
-            loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions
+            loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions # type: ignore # can't tell tensor dtype
         )
 
 @dataclass
@@ -443,6 +532,15 @@ class DataCollatorCTCWithPadding: # from https://huggingface.co/blog/fine-tune-w
 
         batch["labels"] = labels
 
+        return batch
+
+@dataclass
+class DataCollatorWithPaddingForClassification(DataCollatorWithPadding):
+    """Extends DataCollatorWithPadding with automatic conversion to torch.long."""
+
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+        batch = super().__call__(features)
+        batch['labels'] = batch['labels'].long()
         return batch
 
 @dataclass
