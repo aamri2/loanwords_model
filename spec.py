@@ -329,7 +329,7 @@ class BaseSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr']):
         else:
             raise NotImplementedError(f'Architecture for base model {self.value} unspecified.')
 
-class LayerSpec(SpecUnit, name = 'layer', allowed_values = ['attn', 'max', 'class', 'transformer', 'ctc']):
+class LayerSpec(SpecUnit, name = 'layer', allowed_values = ['attn', 'max', 'relu', 'class', 'transformer', 'ctc']):
     """Specification unit for layer types."""
 
 class NaturalNumbers(Container):
@@ -347,7 +347,7 @@ class FrozenSpec(SpecUnit, name = 'frozen', allowed_values = NaturalNumbers()):
 
 class TrainingDatasets(Container):
     base_datasets = ['timit', 'librispeech', 'librispeechFR', 'bl', 'wvEN', 'wvResponses']
-    neutral_variants = ['EV', 'MV', 'S', 'A', 'CL', 'N'] # these don't affect parsing in any way
+    neutral_variants = ['EV', 'MV', 'S', 'A', 'CL', 'N', 'cross'] # these don't affect parsing in any way
     parser = re.compile(f"({'|'.join(base_datasets)})({'|'.join(neutral_variants)})*") # base_dataset + optional neutral_variant
 
     def __contains__(self, x: str) -> bool:

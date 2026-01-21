@@ -6,7 +6,7 @@ manage the relevant specifications.
 """
 
 from spec import ModelSpec, BaseSpec, LayerSpec, TrainingSpec, _SEPARATOR
-from model_architecture import Wav2Vec2WithAttentionClassifier, Wav2Vec2ForCTCWithTransformer, Wav2Vec2ForCTCWithAttentionClassifier, Wav2Vec2ForCTCWithTransformerL2, Wav2Vec2ForCTCWithMaxPooling
+from model_architecture import Wav2Vec2WithAttentionClassifier, Wav2Vec2ForCTCWithTransformer, Wav2Vec2ForCTCWithAttentionClassifier, Wav2Vec2ForCTCWithTransformerL2, Wav2Vec2ForCTCWithMaxPooling, Wav2Vec2ForCTCWithMaxPoolingReLU
 import pandas, numpy
 import scipy
 import sklearn
@@ -63,6 +63,8 @@ class Model():
                         return Wav2Vec2ForCTCWithAttentionClassifier
                     elif layers[2].value == 'max':
                         return Wav2Vec2ForCTCWithMaxPooling
+                elif len(layers) == 5 and layers[2].value == 'max' and layers[3].value == 'relu' and layers[4].value == 'class':
+                    return Wav2Vec2ForCTCWithMaxPoolingReLU
             elif len(layers) == 3 and layers[1].value == 'attn' and layers[2].value == 'class':
                 return Wav2Vec2WithAttentionClassifier
             elif len(layers) >= 3 and layers[1].value == 'transformer' and layers[2].value == 'ctc':
