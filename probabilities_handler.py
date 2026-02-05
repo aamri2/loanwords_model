@@ -1,6 +1,6 @@
 from spec import ProbabilitySpec, HumanProbabilitySpec, _SEPARATOR
 from datasets import Dataset
-from test_dataset_handler import TestDataset
+from test_dataset_handler import t, TestDataset
 from model_handler import Model
 from model_handler import probabilities as legacy_probabilities
 import pandas as pd
@@ -23,7 +23,7 @@ class Probabilities():
 
     def __init__(self, spec: str | ProbabilitySpec):
         self.spec = ProbabilitySpec(spec)
-        self.test_dataset = TestDataset(self.spec.test_dataset)
+        self.test_dataset = t[self.spec.test_dataset]
         self.probabilities = self.load_probabilities()
 
     def pool(self, *args: str, **kwargs: str) -> pd.DataFrame:
@@ -43,11 +43,12 @@ class Probabilities():
         pooled_probabilities = probabilities.pivot_table(values = 'probabilities', columns = 'classification', index = args, sort = False)
         return pooled_probabilities
     
-    def heatmap(self, *args: str, **kwargs: str):
+    def heatmap(self, *args: str, show = True, **kwargs: str):
         """Uses pool to create a seaborn heatmap."""
 
         sns.heatmap(self.pool(*args, **kwargs), cmap = 'crest', square = True)
-        plt.show()
+        plt.title(str(self.spec))
+        plt.show(block = False)
 
     def load_probabilities(self, path = _PROBABILITIES_PATH, prefix = _PROBABILITIES_PREFIX) -> pd.DataFrame:
         """Loads fully-prepared probabilities from a specification. Attempts to create them if missing."""
@@ -55,9 +56,9 @@ class Probabilities():
         try:
             probabilities = pd.read_csv(f'{path}{prefix}{_SEPARATOR}{self.spec}.csv')
         except:
-            if str(self.spec) == 'w2v2_ctc_1_timit_max_class_3_wvResponses_wv':
-                dataset = self.test_dataset.dataset
-                probabilities = legacy_probabilities(Model(self.spec.model).model, self.test_dataset.dataset)
+            if 'max' in str(self.spec):
+                label2id = Model(self.spec.model).vocab
+                probabilities = legacy_probabilities(Model(self.spec.model).model, self.test_dataset.dataset, id2label = {v: k for k, v in label2id.items()})
             else:
                 raise NotImplementedError("Cannot dynamically generate probabilities yet.")
         

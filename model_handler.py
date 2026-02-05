@@ -6,7 +6,7 @@ manage the relevant specifications.
 """
 
 from spec import ModelSpec, BaseSpec, LayerSpec, TrainingSpec, _SEPARATOR
-from model_architecture import Wav2Vec2WithAttentionClassifier, Wav2Vec2ForCTCWithTransformer, Wav2Vec2ForCTCWithAttentionClassifier, Wav2Vec2ForCTCWithTransformerL2, Wav2Vec2ForCTCWithMaxPooling, Wav2Vec2ForCTCWithMaxPoolingReLU
+from model_architecture import *
 import pandas, numpy
 import scipy
 import sklearn
@@ -58,15 +58,36 @@ class Model():
             if len(layers) >= 2 and layers[1].value == 'ctc':
                 if len(layers) == 2:
                     return Wav2Vec2ForCTC
-                elif len(layers) == 4 and layers[3].value == 'class':
-                    if layers[2].value == 'attn':
-                        return Wav2Vec2ForCTCWithAttentionClassifier
+                elif len(layers) == 4:
+                    if layers[3].value == 'class':
+                        if layers[2].value == 'attn':
+                            return Wav2Vec2ForCTCWithAttentionClassifier
+                        elif layers[2].value == 'max':
+                            return Wav2Vec2ForCTCWithMaxPooling
+                elif len(layers) == 5 and layers[3].value == 'relu' and layers[4].value == 'class':
+                    if layers[2].value == 'tempmax':
+                        return Wav2Vec2ForCTCWithTemporalMaxPoolingReLU
                     elif layers[2].value == 'max':
-                        return Wav2Vec2ForCTCWithMaxPooling
-                elif len(layers) == 5 and layers[2].value == 'max' and layers[3].value == 'relu' and layers[4].value == 'class':
-                    return Wav2Vec2ForCTCWithMaxPoolingReLU
+                        if isinstance(spec.training, tuple):
+                            training = spec.training[-1]
+                        else:
+                            training = spec.training
+                        if isinstance(training.training_var, tuple):
+                            training_var = training.training_var
+                        elif training.training_var:
+                            training_var = (training.training_var,)
+                        else:
+                            training_var = tuple()
+                        if 'varHidden' in [var.value for var in training_var]:
+                            return Wav2Vec2WithMaxPoolingReLU
+                        else:
+                            return Wav2Vec2ForCTCWithMaxPoolingReLU
+                    elif layers[2].value == 'hiddenmax':
+                        return Wav2Vec2ForCTCWithHiddenMaxPoolingReLU
             elif len(layers) == 3 and layers[1].value == 'attn' and layers[2].value == 'class':
                 return Wav2Vec2WithAttentionClassifier
+            elif len(layers) == 4 and layers[1].value == 'max' and layers[2].value == 'relu' and layers[3].value == 'class':
+                return Wav2Vec2WithMaxPoolingReLU
             elif len(layers) >= 3 and layers[1].value == 'transformer' and layers[2].value == 'ctc':
                 if len(layers) == 3:
                     return Wav2Vec2ForCTCWithTransformer

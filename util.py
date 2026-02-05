@@ -3,6 +3,7 @@ from spec import TestDatasetSpec, ProbabilitySpec, HumanProbabilitySpec, _SEPARA
 from probabilities_handler import Probabilities, HumanProbabilities, _PROBABILITIES_PATH, _PROBABILITIES_PREFIX
 import glob
 import warnings
+import matplotlib.pyplot as plt
 
 class ProbabilitiesMap(Mapping):
     """
@@ -62,10 +63,20 @@ class ProbabilitiesMap(Mapping):
         return f'{self.__class__.__name__}({repr(self._map)})'
     
     def autoload_probabilities(self, path: str = _PROBABILITIES_PATH) -> None:
-        paths = glob.glob(f'{_PROBABILITIES_PREFIX}{_SEPARATOR}*.csv', root_dir=path)
-        for path in paths:
+        probabilities = self.find_probabilities()
+        for probability in probabilities:
             try:
-                self.load(path[2:-4])
+                self.load(probability)
             except ValueError:
-                warnings.warn(f"Failed to load probability with spec {path[2:-4]}. Continuing...", UserWarning)
+                warnings.warn(f"Failed to load probability with spec {probability[2:-4]}. Continuing...", UserWarning)
+
+    def find_probabilities(self, path: str = _PROBABILITIES_PATH) -> tuple[str, ...]:
+        paths = glob.glob(f'{_PROBABILITIES_PREFIX}{_SEPARATOR}*.csv', root_dir=path)
+        probabilities = tuple(path[2: - 4] for path in paths)
+        return probabilities
+    
+    def heatmap(self, key: Sequence[str | ProbabilitySpec | HumanProbabilitySpec], *args, **kwargs):
+        self.__getitem__(key[0]).heatmap(*args, show = False, **kwargs)
+        for probability in key[1:]:
+            self.__getitem__(probability).heatmap(*args, **kwargs)
 

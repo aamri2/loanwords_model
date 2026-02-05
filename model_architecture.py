@@ -8,11 +8,12 @@ from transformers.modeling_outputs import CausalLMOutput
 from transformers.data.data_collator import DataCollatorWithPadding
 from typing import Dict, List, Optional, Union, Any
 from dataclasses import dataclass
+import math
 
 # try max pooling on the logits (i.e. maximum per classification over time) and use that
 # to predict the individual participant responses (cf. logistic regression); stratify
 # train/test/val on vowels, but not on individual stimuli! 80/10/10 split?
-
+_HIDDEN_STATES_START_POSITION = 2
 
 class AttentionPooling(nn.Module):
     """
@@ -157,8 +158,6 @@ class Wav2Vec2ForCTCWithAttentionClassifier(Wav2Vec2ForCTC):
         pooled_output = self.attention_pooling(hidden_states)
         logits = self.classifier(pooled_output)
         
-
-
         loss = None
         if labels is not None:
             if self.config.problem_type is None:
@@ -171,7 +170,6 @@ class Wav2Vec2ForCTCWithAttentionClassifier(Wav2Vec2ForCTC):
                 else:
                     self.config.problem_type = "multi_label_classification"
             
-
             if self.config.problem_type == "regression":
                 loss_fn = nn.MSELoss()
             
@@ -239,8 +237,6 @@ class Wav2Vec2ForCTCWithMaxPooling(Wav2Vec2ForCTC):
         pooled_output = self.max_pooling(hidden_states.transpose(1, 2)).flatten(1) # by default pools the other way
         logits = self.classifier(pooled_output)
         
-
-
         loss = None
         if labels is not None:
             if self.config.problem_type is None:
@@ -266,33 +262,28 @@ class Wav2Vec2ForCTCWithMaxPooling(Wav2Vec2ForCTC):
             loss = loss_fn(logits, labels)
         
         return {'loss': loss, 'logits': logits} if loss is not None else {'logits': logits}
-    
 
 class Wav2Vec2ForCTCWithMaxPoolingReLU(Wav2Vec2ForCTC):
     """Adds max pooling and a classification head with a hidden ReLU layer to the CTC model base."""
-
     def __init__(self, config):
         super().__init__(config)
-        self.max_pooling = nn.AdaptiveMaxPool1d(1)
         if not hasattr(config, 'classifier_hidden_size'):
             config.classifier_hidden_size = (config.vocab_size + config.num_labels) // 2
+        self.max_pooling = nn.AdaptiveMaxPool1d(1)
         self.classifier = nn.Sequential(
             nn.ReLU(),
             nn.Linear(config.vocab_size, config.classifier_hidden_size),
             nn.Linear(config.classifier_hidden_size, config.num_labels)
         )
         self.post_init()
-
     def freeze_base_model(self): # freeze everything but the classification head
         """Freezes Wav2Vec2 and CTC layers, so only the attention and classifier get trained."""
-
         for param in self.wav2vec2.parameters():
             param.requires_grad = False
         for param in self.dropout.parameters():
             param.requires_grad = False
         for param in self.lm_head.parameters():
             param.requires_grad = False
-
     def forward(self,
         input_values: Optional[torch.Tensor],
         attention_mask: Optional[torch.Tensor] = None,
@@ -302,7 +293,6 @@ class Wav2Vec2ForCTCWithMaxPoolingReLU(Wav2Vec2ForCTC):
         labels: Optional[torch.Tensor] = None,
         frame_mask = None,
     ):
-
         outputs = self.wav2vec2(
             input_values,
             attention_mask=attention_mask,
@@ -310,51 +300,258 @@ class Wav2Vec2ForCTCWithMaxPoolingReLU(Wav2Vec2ForCTC):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-
         hidden_states = outputs[0]
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.lm_head(hidden_states)
-
         if frame_mask is not None:
             # adjust to actual length from estimate
             if frame_mask.shape[1] < hidden_states.shape[1]:
                 frame_mask = torch.nn.functional.pad(frame_mask, (0, hidden_states.shape[1] - frame_mask.shape[1]), value = 0.0)
             elif frame_mask.shape[1] > hidden_states.shape[1]:
                 frame_mask = frame_mask[:, :hidden_states.shape[1]]
-            
             frame_mask = frame_mask.unsqueeze(-1).type_as(hidden_states)
             hidden_states = hidden_states * frame_mask
-
         pooled_output = self.max_pooling(hidden_states.transpose(1, 2)).flatten(1) # by default pools the other way
         logits = self.classifier(pooled_output)
-
         loss = None
         if labels is not None:
             if self.config.problem_type is None:
                 if self.config.num_labels == 1:
                     self.config.problem_type = "regression"
-                
                 elif self.config.num_labels > 1 and labels.dtype in (torch.long, torch.int):
                     self.config.problem_type = "single_label_classification"
-                
                 else:
                     self.config.problem_type = "multi_label_classification"
-            
-
             if self.config.problem_type == "regression":
                 loss_fn = nn.MSELoss()
-            
             elif self.config.problem_type == "single_label_classification":
                 loss_fn = nn.CrossEntropyLoss()
-            
             elif self.config.problem_type == "multi_label_classification":
                 loss_fn = nn.BCEWithLogitsLoss()
-            
             loss = loss_fn(logits, labels)
-        
         return {'loss': loss, 'logits': logits} if loss is not None else {'logits': logits}
 
-_HIDDEN_STATES_START_POSITION = 2
+class Wav2Vec2WithMaxPoolingReLU(Wav2Vec2ForCTC):
+    """Adds max pooling and a classification head with a hidden ReLU layer to the model base."""
+    def __init__(self, config):
+        super().__init__(config)
+        if not hasattr(config, 'classifier_hidden_size'):
+            config.classifier_hidden_size = (config.output_hidden_size + config.num_labels) // 2
+        if config.use_weighted_layer_sum:
+            num_layers = config.num_hidden_layers + 1
+            self.layer_weights = nn.Parameter(torch.ones(num_layers) / num_layers)
+        self.max_pooling = nn.Sequential(
+            nn.AdaptiveMaxPool1d(5),
+            nn.Linear(5, 1)
+        )
+        self.classifier = nn.Sequential(
+            nn.ReLU(),
+            nn.Linear(config.output_hidden_size, config.classifier_hidden_size),
+            nn.Linear(config.classifier_hidden_size, config.num_labels)
+        )
+        self.post_init()
+    def freeze_base_model(self): # freeze everything but the classification head
+        """Freezes Wav2Vec2 and CTC layers, so only the attention and classifier get trained."""
+        for param in self.wav2vec2.parameters():
+            param.requires_grad = False
+        for param in self.dropout.parameters():
+            param.requires_grad = False
+        for param in self.lm_head.parameters():
+            param.requires_grad = False
+    def forward(self,
+        input_values: Optional[torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        labels: Optional[torch.Tensor] = None,
+        frame_mask = None,
+    ):
+        outputs = self.wav2vec2(
+            input_values,
+            attention_mask=attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        if self.config.use_weighted_layer_sum:
+            hidden_states = outputs[_HIDDEN_STATES_START_POSITION]
+            hidden_states = torch.stack(hidden_states, dim = 1)
+            norm_weights = nn.functional.softmax(self.layer_weights, dim = -1)
+            hidden_states = (hidden_states * norm_weights.view(-1, 1, 1)).sum(dim = 1)
+        else:
+            hidden_states = outputs[0]
+        if frame_mask is not None:
+            # adjust to actual length from estimate
+            if frame_mask.shape[1] < hidden_states.shape[1]:
+                frame_mask = torch.nn.functional.pad(frame_mask, (0, hidden_states.shape[1] - frame_mask.shape[1]), value = 0.0)
+            elif frame_mask.shape[1] > hidden_states.shape[1]:
+                frame_mask = frame_mask[:, :hidden_states.shape[1]]
+            frame_mask = frame_mask.unsqueeze(-1).type_as(hidden_states)
+            hidden_states = hidden_states * frame_mask
+        pooled_output = self.max_pooling(hidden_states.transpose(1, 2)).flatten(1) # by default pools the other way
+        logits = self.classifier(pooled_output)
+        loss = None
+        if labels is not None:
+            if self.config.problem_type is None:
+                if self.config.num_labels == 1:
+                    self.config.problem_type = "regression"
+                elif self.config.num_labels > 1 and labels.dtype in (torch.long, torch.int):
+                    self.config.problem_type = "single_label_classification"
+                else:
+                    self.config.problem_type = "multi_label_classification"
+            if self.config.problem_type == "regression":
+                loss_fn = nn.MSELoss()
+            elif self.config.problem_type == "single_label_classification":
+                loss_fn = nn.CrossEntropyLoss()
+            elif self.config.problem_type == "multi_label_classification":
+                loss_fn = nn.BCEWithLogitsLoss()
+            loss = loss_fn(logits, labels)
+        return {'loss': loss, 'logits': logits} if loss is not None else {'logits': logits}
+    
+class Wav2Vec2ForCTCWithTemporalMaxPoolingReLU(Wav2Vec2ForCTC):
+    """Adds max pooling with temporality and a classification head with a hidden ReLU layer to the CTC model base."""
+    def __init__(self, config):
+        super().__init__(config)
+        if not hasattr(config, 'classifier_hidden_size'):
+            config.classifier_hidden_size = (config.vocab_size + config.num_labels) // 2
+        self.max_pooling = nn.Sequential(
+            nn.AdaptiveMaxPool1d(5),
+            nn.Linear(5, 1),
+            nn.ReLU()
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(config.vocab_size, config.classifier_hidden_size),
+            nn.Linear(config.classifier_hidden_size, config.num_labels)
+        )
+        self.post_init()
+    def freeze_base_model(self): # freeze everything but the classification head
+        """Freezes Wav2Vec2 and CTC layers, so only the attention and classifier get trained."""
+        for param in self.wav2vec2.parameters():
+            param.requires_grad = False
+        for param in self.dropout.parameters():
+            param.requires_grad = False
+        for param in self.lm_head.parameters():
+            param.requires_grad = False
+    def forward(self,
+        input_values: Optional[torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        labels: Optional[torch.Tensor] = None,
+        frame_mask = None,
+    ):
+        outputs = self.wav2vec2(
+            input_values,
+            attention_mask=attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        hidden_states = outputs[0]
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.lm_head(hidden_states)
+        if frame_mask is not None:
+            # adjust to actual length from estimate
+            if frame_mask.shape[1] < hidden_states.shape[1]:
+                frame_mask = torch.nn.functional.pad(frame_mask, (0, hidden_states.shape[1] - frame_mask.shape[1]), value = 0.0)
+            elif frame_mask.shape[1] > hidden_states.shape[1]:
+                frame_mask = frame_mask[:, :hidden_states.shape[1]]
+            frame_mask = frame_mask.unsqueeze(-1).type_as(hidden_states)
+            hidden_states = hidden_states * frame_mask
+        pooled_output = self.max_pooling(hidden_states.transpose(1, 2)).flatten(1) # by default pools the other way
+        logits = self.classifier(pooled_output)
+        loss = None
+        if labels is not None:
+            if self.config.problem_type is None:
+                if self.config.num_labels == 1:
+                    self.config.problem_type = "regression"
+                elif self.config.num_labels > 1 and labels.dtype in (torch.long, torch.int):
+                    self.config.problem_type = "single_label_classification"
+                else:
+                    self.config.problem_type = "multi_label_classification"
+            if self.config.problem_type == "regression":
+                loss_fn = nn.MSELoss()
+            elif self.config.problem_type == "single_label_classification":
+                loss_fn = nn.CrossEntropyLoss()
+            elif self.config.problem_type == "multi_label_classification":
+                loss_fn = nn.BCEWithLogitsLoss()
+            loss = loss_fn(logits, labels)
+        return {'loss': loss, 'logits': logits} if loss is not None else {'logits': logits}
+
+class Wav2Vec2ForCTCWithHiddenMaxPoolingReLU(Wav2Vec2ForCTC):
+    """Adds max pooling with temporality and a classification head with a hidden ReLU layer to the CTC model base."""
+    def __init__(self, config):
+        super().__init__(config)
+        if not hasattr(config, 'classifier_hidden_size'):
+            config.classifier_hidden_size = (config.vocab_size + config.output_hidden_size + config.num_labels) // 2
+        self.max_pooling = nn.Sequential(
+            nn.AdaptiveMaxPool1d(5),
+            nn.Linear(5, 1),
+            nn.ReLU()
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(config.vocab_size + config.output_hidden_size, config.classifier_hidden_size),
+            nn.Linear(config.classifier_hidden_size, config.num_labels)
+        )
+        self.post_init()
+    def freeze_base_model(self): # freeze everything but the classification head
+        """Freezes Wav2Vec2 and CTC layers, so only the attention and classifier get trained."""
+        for param in self.wav2vec2.parameters():
+            param.requires_grad = False
+        for param in self.dropout.parameters():
+            param.requires_grad = False
+        for param in self.lm_head.parameters():
+            param.requires_grad = False
+    def forward(self,
+        input_values: Optional[torch.Tensor],
+        attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        labels: Optional[torch.Tensor] = None,
+        frame_mask = None,
+    ):
+        outputs = self.wav2vec2(
+            input_values,
+            attention_mask=attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        hidden_states = outputs[0]
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.lm_head(hidden_states)
+        if frame_mask is not None:
+            # adjust to actual length from estimate
+            if frame_mask.shape[1] < hidden_states.shape[1]:
+                frame_mask = torch.nn.functional.pad(frame_mask, (0, hidden_states.shape[1] - frame_mask.shape[1]), value = 0.0)
+            elif frame_mask.shape[1] > hidden_states.shape[1]:
+                frame_mask = frame_mask[:, :hidden_states.shape[1]]
+            frame_mask = frame_mask.unsqueeze(-1).type_as(hidden_states)
+            hidden_states = hidden_states * frame_mask
+        pooled_output = torch.cat([self.max_pooling(hidden_states.transpose(1, 2)).flatten(1), # by default pools the other way
+                                  self.max_pooling(outputs[0].transpose(1, 2)).flatten(1)], dim = 1)
+        logits = self.classifier(pooled_output)
+        loss = None
+        if labels is not None:
+            if self.config.problem_type is None:
+                if self.config.num_labels == 1:
+                    self.config.problem_type = "regression"
+                elif self.config.num_labels > 1 and labels.dtype in (torch.long, torch.int):
+                    self.config.problem_type = "single_label_classification"
+                else:
+                    self.config.problem_type = "multi_label_classification"
+            if self.config.problem_type == "regression":
+                loss_fn = nn.MSELoss()
+            elif self.config.problem_type == "single_label_classification":
+                loss_fn = nn.CrossEntropyLoss()
+            elif self.config.problem_type == "multi_label_classification":
+                loss_fn = nn.BCEWithLogitsLoss()
+            loss = loss_fn(logits, labels)
+        return {'loss': loss, 'logits': logits} if loss is not None else {'logits': logits}
+
 class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
     """
     Wav2Vec2ForCTC with a transformer encoder before the CTC layer.
@@ -373,16 +570,12 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
         )
         self.dropout = nn.Dropout(config.final_dropout)
         self.lm_head = nn.Linear(config.output_hidden_size, config.vocab_size)
-
         # Initialize weights and apply final processing
         self.post_init()
-
     def freeze_base_model(self): # freeze wav2vec2
         """Freezes Wav2Vec2 and CTC layers, so only the attention and classifier get trained."""
-
         for param in self.wav2vec2.parameters():
             param.requires_grad = False
-
     def forward(
         self,
         input_values: torch.Tensor,
@@ -401,10 +594,8 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         output_hidden_states = True if self.config.use_weighted_layer_sum else output_hidden_states # need hidden states for this
-
         if labels is not None and labels.max() >= self.config.vocab_size:
             raise ValueError(f"Label values must be <= vocab_size: {self.config.vocab_size}")
-
         outputs = self.wav2vec2(
             input_values,
             attention_mask=attention_mask,
@@ -412,7 +603,6 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-
         if self.config.use_weighted_layer_sum:
             hidden_states = outputs[_HIDDEN_STATES_START_POSITION]
             hidden_states = torch.stack(hidden_states, dim=1)
@@ -420,12 +610,9 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
             hidden_states = (hidden_states * norm_weights.view(-1, 1, 1)).sum(dim=1)
         else:
             hidden_states = outputs[0]
-        
         hidden_states = self.transformer(hidden_states)
         hidden_states = self.dropout(hidden_states)
-
         logits = self.lm_head(hidden_states)
-
         loss = None
         if labels is not None:
             # retrieve loss input_lengths from attention_mask
@@ -433,16 +620,13 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
                 attention_mask if attention_mask is not None else torch.ones_like(input_values, dtype=torch.long)
             )
             input_lengths = self._get_feat_extract_output_lengths(attention_mask.sum(-1)).to(torch.long) # type: ignore # can't recognize LongTensor and Tensor interchangeability
-
             # assuming that padded tokens are filled with -100
             # when not being attended to
             labels_mask = labels >= 0
             target_lengths = labels_mask.sum(-1)
             flattened_targets = labels.masked_select(labels_mask)
-
             # ctc_loss doesn't support fp16
             log_probs = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).transpose(0, 1)
-
             with torch.backends.cudnn.flags(enabled=False):
                 loss = nn.functional.ctc_loss(
                     log_probs,
@@ -453,11 +637,9 @@ class Wav2Vec2ForCTCWithTransformer(Wav2Vec2PreTrainedModel):
                     reduction=self.config.ctc_loss_reduction,
                     zero_infinity=self.config.ctc_zero_infinity,
                 )
-
         if not return_dict:
             output = (logits,) + outputs[_HIDDEN_STATES_START_POSITION:]
             return ((loss,) + output) if loss is not None else output
-
         return CausalLMOutput(
             loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions # type: ignore # can't recognize tensor type
         )

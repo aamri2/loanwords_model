@@ -117,8 +117,11 @@ class SpecComplex(Spec[Sequence[Spec | Sequence[Spec] | None]]):
                 try:
                     self.__init__(self._from_str(value))
                     return
-                except ValueError:
-                    raise ValueError(f"String values must be in the special format using the separator {_SEPARATOR}.")
+                except ValueError as e:
+                    if not _SEPARATOR in value:
+                        raise ValueError(f"String values must be in the special format using the separator {_SEPARATOR}.")
+                    else:
+                        raise e
             elif isinstance(value, (type(self), Sequence)):
                 value_names = [value_type.name for value_type in self._value_types]
                 value = self.cast_self(value)
@@ -329,7 +332,7 @@ class BaseSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr']):
         else:
             raise NotImplementedError(f'Architecture for base model {self.value} unspecified.')
 
-class LayerSpec(SpecUnit, name = 'layer', allowed_values = ['attn', 'max', 'relu', 'class', 'transformer', 'ctc']):
+class LayerSpec(SpecUnit, name = 'layer', allowed_values = ['attn', 'max', 'tempmax', 'hiddenmax', 'relu', 'class', 'transformer', 'ctc']):
     """Specification unit for layer types."""
 
 class NaturalNumbers(Container):
@@ -347,7 +350,7 @@ class FrozenSpec(SpecUnit, name = 'frozen', allowed_values = NaturalNumbers()):
 
 class TrainingDatasets(Container):
     base_datasets = ['timit', 'librispeech', 'librispeechFR', 'bl', 'wvEN', 'wvResponses']
-    neutral_variants = ['EV', 'MV', 'S', 'A', 'CL', 'N', 'cross'] # these don't affect parsing in any way
+    neutral_variants = ['EV', 'MV', 'S', 'A', 'CL', 'N'] # these don't affect parsing in any way
     parser = re.compile(f"({'|'.join(base_datasets)})({'|'.join(neutral_variants)})*") # base_dataset + optional neutral_variant
 
     def __contains__(self, x: str) -> bool:
@@ -370,7 +373,7 @@ class TrainingDatasetSpec(SpecUnit, name = 'training_dataset', allowed_values = 
 
 class TrainingVars(Container):
     value: str
-    allowed_patterns = ['v[0-9]+', '[0-9]+e', '[0-9]+', 'best'] # regex patterns; versions, epoch counts, initializations
+    allowed_patterns = ['v[0-9]+', '[0-9]+e', '[0-9]+', 'best', 'cross', 'N', 'var[a-z|A-Z]+'] # regex patterns; versions, epoch counts, initializations
     parser = re.compile(f"({'|'.join(allowed_patterns)})")
 
     def __contains__(self, x: str) -> bool:
