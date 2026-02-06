@@ -3,7 +3,7 @@ from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict,
 import datasets
 import json
 import pandas as pd
-from typing import cast, Protocol
+from typing import Union, cast
 from collections.abc import Callable
 import phonemizer.separator
 import torch
@@ -251,6 +251,28 @@ def prepare_wvResponses():
 
     prep_wvResponses = wvResponses.map(prepare_dataset, remove_columns=['audio', 'vowel_language'])
     return prep_wvResponses
+
+def prepare_wvENResponses():
+    """Prepares World Vowels stimuli with individual responses as classifications."""
+    
+    human_responses = pd.read_csv('../human_vowel_responses.csv')
+    human_responses = human_responses[(human_responses['language_indiv'] == 'english') * (human_responses['language_stimuli'] == 'EN')]
+
+    wvENResponses = Dataset.from_dict({
+        'audio': [f'../stimuli_world_vowels/{file}.wav' for file in human_responses['filename']],
+        'label': human_responses['assimilation'],
+        'vowel': human_responses['#phone'],
+    }).cast_column('audio', datasets.Audio()).class_encode_column('label').class_encode_column('vowel').shuffle()
+    
+    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+
+    def prepare_dataset(batch):
+        audio = batch['audio']
+        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
+        return batch
+
+    prep_wvENResponses = wvENResponses.map(prepare_dataset, remove_columns=['audio', 'vowel'])
+    return prep_wvENResponses
 
 def prepare_wvEN():
     """Prepares World Vowels English stimuli."""
