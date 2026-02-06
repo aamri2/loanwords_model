@@ -46,6 +46,7 @@ class Probabilities():
     def heatmap(self, *args: str, show = True, **kwargs: str):
         """Uses pool to create a seaborn heatmap."""
 
+        plt.figure()
         sns.heatmap(self.pool(*args, **kwargs), cmap = 'crest', square = True)
         plt.title(str(self.spec))
         plt.show(block = False)
@@ -102,10 +103,10 @@ vowel_order = 'iɪyʏeɛøœaæɐɑʌoɔɤuʊɯ:ː\u0303'
 def world_vowel_sort(data: pd.DataFrame):
     data = data.sort_values(
         by = 'classification',
-        key = lambda x: [[vowel_order.index(c) for c in s] for s in x],
+        key = lambda x: pd.Series([vowel_order.index(c) for c in s] for s in x),
     ).sort_values(by = 'file', kind = 'mergesort').sort_values(
         by = 'vowel',
-        key = lambda x: [[vowel_order.index(c) for c in s] for s in x],
+        key = lambda x: pd.Series([vowel_order.index(c) for c in s] for s in x),
         kind = 'mergesort'
     ).sort_values(by = ['language'], kind = 'mergesort')
     return data

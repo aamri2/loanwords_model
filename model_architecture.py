@@ -367,6 +367,7 @@ class Wav2Vec2WithMaxPoolingReLU(Wav2Vec2ForCTC):
         labels: Optional[torch.Tensor] = None,
         frame_mask = None,
     ):
+        output_hidden_states = True if self.config.use_weighted_layer_sum else output_hidden_states # need hidden states for this
         outputs = self.wav2vec2(
             input_values,
             attention_mask=attention_mask,

@@ -349,7 +349,7 @@ class FrozenSpec(SpecUnit, name = 'frozen', allowed_values = NaturalNumbers()):
         super().__init__(value, *args, **kwargs)
 
 class TrainingDatasets(Container):
-    base_datasets = ['timit', 'librispeech', 'librispeechFR', 'bl', 'wvEN', 'wvResponses']
+    base_datasets = ['timit', 'librispeech', 'librispeechFR', 'bl', 'wvEN', 'wvResponses', 'wvENResponses']
     neutral_variants = ['EV', 'MV', 'S', 'A', 'CL', 'N'] # these don't affect parsing in any way
     parser = re.compile(f"({'|'.join(base_datasets)})({'|'.join(neutral_variants)})*") # base_dataset + optional neutral_variant
 
