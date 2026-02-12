@@ -6,6 +6,8 @@ from transformers import Wav2Vec2PreTrainedModel, Wav2Vec2Model, Wav2Vec2ForCTC,
 from transformers.feature_extraction_utils import BatchFeature
 from transformers.modeling_outputs import CausalLMOutput
 from transformers.data.data_collator import DataCollatorWithPadding
+from transformers.modeling_utils import PreTrainedModel
+from transformers import Wav2Vec2Config
 from typing import Dict, List, Optional, Union, Any
 from dataclasses import dataclass
 import math
@@ -741,6 +743,281 @@ class Wav2Vec2ForCTCWithTransformerL2(Wav2Vec2ForCTCWithTransformer):
         return CausalLMOutput(
             loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions # type: ignore # can't tell tensor dtype
         )
+
+class Wav2Vec2LoanwordsConfig(Wav2Vec2Config):
+    """
+    Offers additional configuration parameters specific to the loanwords
+    project, including parameters that affect the structure of the model heads.
+    These are designed to allow models to be more-or-less fully specified from specs.
+    Defaults correspond to simply having a Wav2Vec2Model.
+
+    Inherits from [`Wav2Vec2Config`]. Read the documentation from
+    [`Wav2Vec2Config`] for more information.
+
+    Args:
+        transform_hidden_outputs (`bool`, *optional*, defaults to False):
+            Whether to add an additional transformer head on top of the Wav2Vec2
+            base model.
+        ctc_head (`bool`, *optional*, defaults to False):
+            Whether to add a CTC head consisting of a dropout layer and an lm_head layer.
+            `vocab_size` is used for this CTC layer, if `ctc_head` is True.
+        l2_head (`bool`, *optional*, defaults to False):
+            Whether to add a second CTC head on top of an existing one. `ctc_head` must
+            be True. `l2_vocab_size` must be set.
+        l2_vocab_size (`int`, *optional*, defaults to 32):
+            The vocab size of the second CTC head. Only used when `l2_head` is True.
+        append_hidden_outputs (`bool`, *optional*, defaults to False):
+            Whether to append outputs of the hidden layer to CTC outputs for
+            classification. Only used when `ctc_head` and `classifier_head` are True.
+        temporal_pooling (`str`, *optional*, defaults to None):
+            How to pool outputs across time. Always pools the final temporally encoded
+            layer outputs. Accepted values are 'max' and 'attn'. Only used when
+            `classifier_head` is True.
+        max_pooling_windows (`int`, *optional*, defaults to 1):
+            If max pooling is applied, it can be applied across some number of non-
+            overlapping windows and then linearly transformed. If there is only one
+            window, no linear transformation is performed.
+        preclassifier_activation_function (`str`, *optional*, defaults to None):
+            An activation function applied before the classifier. Only used when
+            `classifier_head` is True. Currently supports 'relu'.
+        classifier_head (`bool`, *optional*, defaults to False):
+            Whether to include a classifier head on top of the final pooled outputs.
+            Requires `temporal_pooling` to be set.
+        classifier_hidden (`bool`, *optional*, defaults to None):
+            When True, a hidden layer with dimension `classifier_hidden_size` is added
+            to the classifier head. Requires `classifier_hidden_size`.
+        classifier_hidden_size (`int`, *optional*, defaults to None):
+            The dimensionality of the hidden classifier layer. Only used when
+            `classifier_head` is True. When unspecified, the hidden classifier layer
+            has dimensionality floored mean of the output size and `num_labels`.
+    """
+
+    def __init__(
+        self,
+        *,
+        transform_hidden_outputs = False,
+        ctc_head = False,
+        l2_head = False,
+        l2_vocab_size: int = 32,
+        append_hidden_outputs = False,
+        temporal_pooling = None,
+        max_pooling_windows = 1,
+        preclassifier_activation_function = None,
+        classifier_head = False,
+        classifier_hidden = False,
+        classifier_hidden_size = None,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.transform_hidden_outputs = transform_hidden_outputs
+        self.ctc_head = ctc_head
+        self.l2_head = l2_head
+        if self.l2_head and not self.ctc_head:
+            raise ValueError("Invalid configuration. l2_head cannot be True unless ctc_head is True.")
+        self.l2_vocab_size = l2_vocab_size
+        if self.l2_head and not self.l2_vocab_size:
+            raise ValueError("If l2_head is True, l2_vocab_size must be specified.")
+        self.append_hidden_outputs = append_hidden_outputs
+        self.temporal_pooling = temporal_pooling
+        if self.temporal_pooling and not self.temporal_pooling in ['max', 'attn']:
+            raise ValueError(f"Unrecognized temporal pooling: {self.temporal_pooling}.")
+        self.max_pooling_windows = max_pooling_windows
+        self.preclassifier_activation_function = preclassifier_activation_function
+        if self.preclassifier_activation_function and not self.preclassifier_activation_function in ['relu']:
+            raise ValueError(f"Unrecognized preclassifier activation function: {self.preclassifier_activation_function}.")
+        self.classifier_head = classifier_head
+        self.classifier_hidden = classifier_hidden
+        self.classifier_hidden_size = classifier_hidden_size
+
+class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
+    """
+    A single class that accounts for every possible model structure used for
+    the loanwords project.
+    """
+    config_class = Wav2Vec2LoanwordsConfig
+
+    def __init__(self, config: Wav2Vec2LoanwordsConfig):
+        super().__init__(config)
+        self.wav2vec2 = Wav2Vec2Model(config)
+        output_size = config.output_hidden_size
+    
+        if config.use_weighted_layer_sum:
+            num_layers = config.num_hidden_layers + 1
+            self.hidden_layer_weights = nn.Parameter(torch.ones(num_layers) / num_layers)
+        
+        # transformer?
+        if config.transform_hidden_outputs:
+            self.transformer = nn.TransformerEncoder(
+                encoder_layer=nn.TransformerEncoderLayer(d_model=output_size, nhead=8, dim_feedforward=output_size, batch_first=True),
+                num_layers=6
+            )
+
+        # CTC and L2 heads?
+        if config.ctc_head:
+            self.dropout = nn.Dropout(config.final_dropout)
+            self.lm_head = nn.Linear(output_size, config.vocab_size)
+            output_size = config.vocab_size
+            if config.l2_head:
+                self.l2_head = nn.Linear(config.vocab_size, config.l2_vocab_size)
+                output_size = config.l2_vocab_size
+            if config.append_hidden_outputs:
+                output_size += config.output_hidden_size
+
+        # classifier head and temporal pooling?
+        if config.classifier_head:
+            if config.temporal_pooling == 'max':
+                max_pooling_layers = []
+                if not config.max_pooling_windows or config.max_pooling_windows < 1:
+                    raise ValueError(f"Max pooling requires a positive integer value for max_pooling_windows, but received {config.max_pooling_windows}.")
+                max_pooling_layers.append(nn.AdaptiveMaxPool1d(config.max_pooling_windows))
+                if config.max_pooling_windows > 1:
+                    max_pooling_layers.append(nn.Linear(config.max_pooling_windows, 1))
+                if config.preclassifier_activation_function:
+                    if config.preclassifier_activation_function == 'relu':
+                        max_pooling_layers.append(nn.ReLU())
+                    else:
+                        raise ValueError(f"Unknown preclassifier activation function: {config.preclassifier_activation_function}")
+                self.max_pooling = nn.Sequential(*max_pooling_layers)
+            elif config.temporal_pooling == 'attn':
+                if config.ctc_head and config.append_hidden_outputs:
+                    raise ValueError("Cannot currently perform Attention pooling with hidden outputs appended!")
+                self.attention_pooling = AttentionPooling(output_size)
+            else:
+                raise ValueError(f'Unknown temporal pooling method: {config.temporal_pooling}.')
+            if not config.classifier_hidden:
+                self.classifier = nn.Linear(output_size, config.num_labels)
+            else:
+                if not config.classifier_hidden_size:
+                    config.classifier_hidden_size = (output_size + config.num_labels) // 2
+                self.classifier = nn.Sequential(
+                    nn.Linear(output_size, config.classifier_hidden_size),
+                    nn.Linear(config.classifier_hidden_size, config.num_labels)
+                )
+        self.config = config
+        self.post_init()
+
+    def forward(
+        self,
+        input_values: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+        labels: torch.Tensor | None = None,
+        frame_mask: torch.Tensor | None = None,
+        **kwargs,
+    ) -> tuple | CausalLMOutput:
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        output_hidden_states = True if self.config.use_weighted_layer_sum else output_hidden_states
+        outputs = self.wav2vec2(
+            input_values,
+            attention_mask=attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        if self.config.use_weighted_layer_sum:
+            hidden_states = outputs[_HIDDEN_STATES_START_POSITION]
+            hidden_states = torch.stack(hidden_states, dim=1)
+            norm_weights = nn.functional.softmax(self.hidden_layer_weights, dim=-1)
+            hidden_states = (hidden_states * norm_weights.view(-1, 1, 1)).sum(dim=1)
+        else:
+            hidden_states = outputs[0]
+        if frame_mask is not None:
+            # adjust to actual length from estimate
+            if frame_mask.shape[1] < hidden_states.shape[1]:
+                frame_mask = torch.nn.functional.pad(frame_mask, (0, hidden_states.shape[1] - frame_mask.shape[1]), value = 0.0)
+            elif frame_mask.shape[1] > hidden_states.shape[1]:
+                frame_mask = frame_mask[:, :hidden_states.shape[1]]
+            frame_mask = frame_mask.unsqueeze(-1).type_as(hidden_states)
+            hidden_states = hidden_states * frame_mask
+        
+        if self.config.transform_hidden_outputs:
+            hidden_states = self.transformer(hidden_states)
+        
+        logits = hidden_states
+        if self.config.ctc_head:
+            logits = self.dropout(logits)
+            logits = self.lm_head(logits)
+            if self.config.l2_head:
+                logits = self.l2_head(logits)
+        
+        if self.config.classifier_head:
+            if self.config.temporal_pooling == 'max':
+                if self.config.ctc_head and self.config.append_hidden_outputs:
+                    logits = torch.cat(
+                        [self.max_pooling(logits.transpose(1, 2)).flatten(1),
+                        self.max_pooling(hidden_states.transpose(1, 2)).flatten(1)],
+                        dim=-1
+                    )
+                else:
+                    logits = self.max_pooling(logits.transpose(1, 2)).flatten(1) # by default pools the other way
+            elif self.config.temporal_pooling == 'attn':
+                logits = self.attention_pooling(hidden_states)
+            logits = self.classifier(logits)
+        
+        loss = None
+        if labels is not None:
+            if self.config.problem_type is None:
+                if self.config.ctc_head and not self.config.classifier_head:
+                    self.config.problem_type = 'ctc'
+                if self.config.num_labels == 1:
+                    self.config.problem_type = "regression"
+                elif self.config.num_labels > 1 and labels.dtype in (torch.long, torch.int):
+                    self.config.problem_type = "single_label_classification"
+                else:
+                    self.config.problem_type = "multi_label_classification"
+            if self.config.problem_type == 'ctc':
+                # retrieve loss input_lengths from attention_mask
+                attention_mask = (
+                    attention_mask if attention_mask is not None else torch.ones_like(input_values, dtype=torch.long)
+                )
+                input_lengths = self._get_feat_extract_output_lengths(attention_mask.sum(-1)).to(torch.long) # type: ignore # can't tell tensor dtype
+
+                # assuming that padded tokens are filled with -100
+                # when not being attended to
+                labels_mask = labels >= 0
+                target_lengths = labels_mask.sum(-1)
+                flattened_targets = labels.masked_select(labels_mask)
+
+                # ctc_loss doesn't support fp16
+                log_probs = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).transpose(0, 1)
+
+                with torch.backends.cudnn.flags(enabled=False):
+                    loss = nn.functional.ctc_loss(
+                        log_probs,
+                        flattened_targets,
+                        input_lengths,
+                        target_lengths,
+                        blank=self.config.pad_token_id,
+                        reduction=self.config.ctc_loss_reduction,
+                        zero_infinity=self.config.ctc_zero_infinity,
+                    )
+            else:
+                if self.config.problem_type == "regression":
+                    loss_fn = nn.MSELoss()
+                elif self.config.problem_type == "single_label_classification":
+                    loss_fn = nn.CrossEntropyLoss()
+                elif self.config.problem_type == "multi_label_classification":
+                    loss_fn = nn.BCEWithLogitsLoss()
+                loss = loss_fn(logits, labels)
+
+        if not return_dict:
+            output = (logits,) + outputs[_HIDDEN_STATES_START_POSITION:]
+            return ((loss,) + output) if loss is not None else output
+
+        return CausalLMOutput(
+            loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions # type: ignore # can't tell tensor dtype
+        )
+    
+    def freeze_feature_encoder(self):
+        self.wav2vec2.feature_extractor._freeze_parameters()
+    
+    def freeze_base_model(self):
+        for param in self.wav2vec2.parameters():
+            param.requires_grad = False
+
 
 @dataclass
 class DataCollatorCTCWithPadding: # from https://huggingface.co/blog/fine-tune-wav2vec2-english

@@ -5,6 +5,8 @@ from model_handler import Model
 from model_handler import probabilities as legacy_probabilities
 import pandas as pd
 import seaborn as sns
+import numpy as np
+from scipy import stats
 from matplotlib import pyplot as plt
 from typing import cast
 
@@ -43,12 +45,22 @@ class Probabilities():
         pooled_probabilities = probabilities.pivot_table(values = 'probabilities', columns = 'classification', index = args, sort = False)
         return pooled_probabilities
     
-    def heatmap(self, *args: str, show = True, **kwargs: str):
+    def heatmap(self, *args: str, **kwargs: str):
         """Uses pool to create a seaborn heatmap."""
 
         plt.figure()
         sns.heatmap(self.pool(*args, **kwargs), cmap = 'crest', square = True)
         plt.title(str(self.spec))
+        plt.show(block = False)
+    
+    def entropy(self, *args: str, **kwargs: str) -> np.ndarray:
+        entropies = stats.entropy(self.pool(*args, **kwargs), axis = 1)
+        return cast(np.ndarray, entropies)
+
+    def entropy_histogram(self, *args: str, **kwargs: str):
+        plt.figure()
+        sns.histplot(self.entropy(*args, **kwargs))
+        plt.title(f'{self.spec} entropies (by {args}, {kwargs})')
         plt.show(block = False)
 
     def load_probabilities(self, path = _PROBABILITIES_PATH, prefix = _PROBABILITIES_PREFIX) -> pd.DataFrame:
