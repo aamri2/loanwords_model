@@ -50,7 +50,7 @@ class Probabilities():
 
         plt.figure()
         sns.heatmap(self.pool(*args, **kwargs), cmap = 'crest', square = True)
-        plt.title(str(self.spec))
+        plt.title(str(self.spec), wrap=True)
         plt.show(block = False)
     
     def entropy(self, *args: str, **kwargs: str) -> np.ndarray:
@@ -60,7 +60,7 @@ class Probabilities():
     def entropy_histogram(self, *args: str, **kwargs: str):
         plt.figure()
         sns.histplot(self.entropy(*args, **kwargs))
-        plt.title(f'{self.spec} entropies (by {args}, {kwargs})')
+        plt.title(f'{self.spec} entropies (by {args}, {kwargs})', wrap=True)
         plt.show(block = False)
 
     def load_probabilities(self, path = _PROBABILITIES_PATH, prefix = _PROBABILITIES_PREFIX) -> pd.DataFrame:
@@ -69,7 +69,7 @@ class Probabilities():
         try:
             probabilities = pd.read_csv(f'{path}{prefix}{_SEPARATOR}{self.spec}.csv')
         except:
-            if 'max' in str(self.spec):
+            if 'max' in str(self.spec) or 'mean' in str(self.spec):
                 label2id = Model(self.spec.model).vocab
                 probabilities = legacy_probabilities(Model(self.spec.model).model, self.test_dataset.dataset, id2label = {v: k for k, v in label2id.items()})
             else:

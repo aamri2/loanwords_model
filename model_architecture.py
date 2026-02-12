@@ -771,7 +771,7 @@ class Wav2Vec2LoanwordsConfig(Wav2Vec2Config):
             classification. Only used when `ctc_head` and `classifier_head` are True.
         temporal_pooling (`str`, *optional*, defaults to None):
             How to pool outputs across time. Always pools the final temporally encoded
-            layer outputs. Accepted values are 'max' and 'attn'. Only used when
+            layer outputs. Accepted values are 'max', 'mean', and 'attn'. Only used when
             `classifier_head` is True.
         max_pooling_windows (`int`, *optional*, defaults to 1):
             If max pooling is applied, it can be applied across some number of non-
@@ -819,7 +819,7 @@ class Wav2Vec2LoanwordsConfig(Wav2Vec2Config):
             raise ValueError("If l2_head is True, l2_vocab_size must be specified.")
         self.append_hidden_outputs = append_hidden_outputs
         self.temporal_pooling = temporal_pooling
-        if self.temporal_pooling and not self.temporal_pooling in ['max', 'attn']:
+        if self.temporal_pooling and not self.temporal_pooling in ['max', 'attn', 'mean']:
             raise ValueError(f"Unrecognized temporal pooling: {self.temporal_pooling}.")
         self.max_pooling_windows = max_pooling_windows
         self.preclassifier_activation_function = preclassifier_activation_function
@@ -882,6 +882,8 @@ class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
                 if config.ctc_head and config.append_hidden_outputs:
                     raise ValueError("Cannot currently perform Attention pooling with hidden outputs appended!")
                 self.attention_pooling = AttentionPooling(output_size)
+            elif config.temporal_pooling == 'mean':
+                self.mean_pooling = nn.AdaptiveAvgPool1d(1)
             else:
                 raise ValueError(f'Unknown temporal pooling method: {config.temporal_pooling}.')
             if not config.classifier_hidden:
@@ -953,6 +955,15 @@ class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
                     )
                 else:
                     logits = self.max_pooling(logits.transpose(1, 2)).flatten(1) # by default pools the other way
+            elif self.config.temporal_pooling == 'mean':
+                if self.config.ctc_head and self.config.append_hidden_outputs:
+                    logits = torch.cat(
+                        [self.mean_pooling(logits.transpose(1, 2)).flatten(1),
+                        self.mean_pooling(hidden_states.transpose(1, 2)).flatten(1)],
+                        dim=-1
+                    )
+                else:
+                    logits = self.mean_pooling(logits.transpose(1, 2)).flatten(1) # by default pools the other way
             elif self.config.temporal_pooling == 'attn':
                 logits = self.attention_pooling(hidden_states)
             logits = self.classifier(logits)

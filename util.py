@@ -91,10 +91,14 @@ class ProbabilitiesMap(Mapping):
         js_divergences = [jensenshannon(p.iloc[row], q.iloc[row])**2 for row in range(len(p))] # square JS distance to get JS divergence
         return cast(list[float], js_divergences)
     
+    def entropy_histogram(self, key: Sequence[str | ProbabilitySpec | HumanProbabilitySpec], *args, **kwargs):
+        for probability in key:
+            self[probability].entropy_histogram(*args, **kwargs)
+    
     def js_divergence_histogram(self, key1: str | ProbabilitySpec | HumanProbabilitySpec, key2: str | ProbabilitySpec | HumanProbabilitySpec, *args, **kwargs):
         plt.figure()
         sns.histplot(self.js_divergence(key1, key2, *args, **kwargs))
-        plt.title(f'JS-divs btwn {key1}, {key2}')
+        plt.title(f'JS-divs btwn {key1}, {key2}', wrap=True)
         plt.show(block=False)
 
 def run_new_models(p: ProbabilitiesMap):

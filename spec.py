@@ -332,7 +332,7 @@ class BaseSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr']):
         else:
             raise NotImplementedError(f'Architecture for base model {self.value} unspecified.')
 
-class LayerSpec(SpecUnit, name = 'layer', allowed_values = ['attn', 'max', 'tempmax', 'hiddenmax', 'relu', 'class', 'transformer', 'ctc']):
+class LayerSpec(SpecUnit, name = 'layer', allowed_values = ['attn', 'max', 'tempmax', 'hiddenmax', 'relu', 'class', 'transformer', 'ctc', 'mean']):
     """Specification unit for layer types."""
 
 class NaturalNumbers(Container):
