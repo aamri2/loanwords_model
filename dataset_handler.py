@@ -303,6 +303,35 @@ def prepare_wvENResponses10Fold():
     prep_wvENResponses_folds.append(splits['train'])
     return DatasetDict({f'fold_{i}': prep_wvENResponses_folds[i] for i in range(10)})
 
+def prepare_wvFRResponses10Fold():
+    """Prepares French World Vowels stimuli with individual responses (from French-speaking participants) as classifications."""
+    
+    human_responses = pd.read_csv('../human_vowel_responses.csv')
+    human_responses = human_responses[(human_responses['language_indiv'] == 'french') * (human_responses['language_stimuli'] == 'FR')]
+
+    wvFRResponses = Dataset.from_dict({
+        'audio': [f'../stimuli_world_vowels/{file}.wav' for file in human_responses['filename']],
+        'label': human_responses['assimilation'],
+        'vowel': human_responses['#phone'],
+    }).cast_column('audio', datasets.Audio()).class_encode_column('label').class_encode_column('vowel').shuffle()
+    
+    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+
+    def prepare_dataset(batch):
+        audio = batch['audio']
+        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
+        return batch
+
+    prep_wvFRResponses = wvFRResponses.map(prepare_dataset, remove_columns=['audio'])
+    splits = prep_wvFRResponses.train_test_split(test_size=1/10)
+    prep_wvFRResponses_folds = [splits['test']]
+    
+    for i in reversed(range(2, 10)):
+        splits = splits['train'].train_test_split(test_size=1/i)
+        prep_wvFRResponses_folds.append(splits['test'])
+    prep_wvFRResponses_folds.append(splits['train'])
+    return DatasetDict({f'fold_{i}': prep_wvFRResponses_folds[i] for i in range(10)})
+
 def prepare_wvEN():
     """Prepares World Vowels English stimuli."""
     
@@ -324,7 +353,33 @@ def prepare_wvEN():
     prep_wvEN = wvEN.map(prepare_dataset, remove_columns=['audio'])
     return prep_wvEN
 
+def prepare_wvEN10Fold():
+    "Prepares WV English stimuli with vowel labels for 10-fold cross validation."
+    
+    human_responses = pd.read_csv('../human_vowel_responses.csv')
+    human_responses = human_responses[(human_responses['language_indiv'] == 'english') * (human_responses['language_stimuli'] == 'EN')]
 
+    wvEN = Dataset.from_dict({
+        'audio': [f'../stimuli_world_vowels/{file}.wav' for file in human_responses['filename']],
+        'label': human_responses['#phone'],
+    }).cast_column('audio', datasets.Audio()).class_encode_column('label').shuffle()
+
+    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+
+    def prepare_dataset(batch):
+        audio = batch['audio']
+        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
+        return batch
+
+    prep_wvEN = wvEN.map(prepare_dataset, remove_columns=['audio'])
+    splits = prep_wvEN.train_test_split(test_size=1/10)
+    prep_wvEN_folds = [splits['test']]
+    
+    for i in reversed(range(2, 10)):
+        splits = splits['train'].train_test_split(test_size=1/i)
+        prep_wvEN_folds.append(splits['test'])
+    prep_wvEN_folds.append(splits['train'])
+    return DatasetDict({f'fold_{i}': prep_wvEN_folds[i] for i in range(10)})
 
 def prepare_timit_ctc(aligned = False):
     """Prepares TIMIT for CTC sequence classification."""
