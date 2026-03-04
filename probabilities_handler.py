@@ -59,7 +59,10 @@ class Probabilities():
 
     def entropy_histogram(self, *args: str, **kwargs: str):
         plt.figure()
-        sns.histplot(self.entropy(*args, **kwargs))
+        entropy = self.entropy(*args, **kwargs)
+        sns.histplot(entropy)
+        plt.axvline(x = entropy.mean(), linestyle = 'dashed', linewidth = 1)
+        plt.text(entropy.mean()*1.1, plt.ylim()[1]*0.9, f'Mean: {entropy.mean():.2f}')
         plt.title(f'{self.spec} entropies (by {args}, {kwargs})', wrap=True)
         plt.show(block = False)
 
