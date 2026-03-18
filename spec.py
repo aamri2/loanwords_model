@@ -322,13 +322,15 @@ class SpecComplex(Spec[Sequence[Spec | Sequence[Spec] | None]]):
                     value[value_name] = subvalue[0]
             return cls(value = None, **value) # typing complains if value not specified
 
-class BaseSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr']):
+class BaseSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr', 'mfcc']):
     """Specification unit for base models."""
 
     @property
     def architecture(self) -> str:
         if self.value in ['w2v2', 'w2v2fr']:
             return 'Wav2Vec2'
+        elif self.value == 'mfcc':
+            return 'MFCC'
         else:
             raise NotImplementedError(f'Architecture for base model {self.value} unspecified.')
 

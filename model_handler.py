@@ -5,19 +5,14 @@ with an accompanying vocabulary. Uses the Spec framework to
 manage the relevant specifications.
 """
 
-from spec import ModelSpec, BaseSpec, LayerSpec, TrainingSpec, _SEPARATOR
+from spec import ModelSpec, LayerSpec, _SEPARATOR
 from model_architecture import *
-import pandas, numpy
-import scipy
-import sklearn
-import seaborn.objects
+import pandas
 import torch
 import json
-from transformers import Wav2Vec2ForCTC, Wav2Vec2Config, AutoModel, Wav2Vec2FeatureExtractor
 from transformers.modeling_utils import PreTrainedModel
 from datasets import Dataset
-from typing import Union, Self, Optional, Any, Callable
-import seaborn
+from typing import Any, Callable
 import matplotlib.pyplot as plt
 import collections
 from base_model_handler import Base
@@ -53,49 +48,12 @@ class Model():
         Huggingface model class.
         """
 
-        return Wav2Vec2LoanwordsModel
-        # layers = spec.layers
-        # if layers[0].architecture == 'Wav2Vec2':
-        #     if len(layers) >= 2 and layers[1].value == 'ctc':
-        #         if len(layers) == 2:
-        #             return Wav2Vec2ForCTC
-        #         elif len(layers) == 4:
-        #             if layers[3].value == 'class':
-        #                 if layers[2].value == 'attn':
-        #                     return Wav2Vec2ForCTCWithAttentionClassifier
-        #                 elif layers[2].value == 'max':
-        #                     return Wav2Vec2ForCTCWithMaxPooling
-        #         elif len(layers) == 5 and layers[3].value == 'relu' and layers[4].value == 'class':
-        #             if layers[2].value == 'tempmax':
-        #                 return Wav2Vec2ForCTCWithTemporalMaxPoolingReLU
-        #             elif layers[2].value == 'max':
-        #                 if isinstance(spec.training, tuple):
-        #                     training = spec.training[-1]
-        #                 else:
-        #                     training = spec.training
-        #                 if isinstance(training.training_var, tuple):
-        #                     training_var = training.training_var
-        #                 elif training.training_var:
-        #                     training_var = (training.training_var,)
-        #                 else:
-        #                     training_var = tuple()
-        #                 if 'varHidden' in [var.value for var in training_var]:
-        #                     return Wav2Vec2WithMaxPoolingReLU
-        #                 else:
-        #                     return Wav2Vec2ForCTCWithMaxPoolingReLU
-        #             elif layers[2].value == 'hiddenmax':
-        #                 return Wav2Vec2ForCTCWithHiddenMaxPoolingReLU
-        #     elif len(layers) == 3 and layers[1].value == 'attn' and layers[2].value == 'class':
-        #         return Wav2Vec2WithAttentionClassifier
-        #     elif len(layers) == 4 and layers[1].value == 'max' and layers[2].value == 'relu' and layers[3].value == 'class':
-        #         return Wav2Vec2WithMaxPoolingReLU
-        #     elif len(layers) >= 3 and layers[1].value == 'transformer' and layers[2].value == 'ctc':
-        #         if len(layers) == 3:
-        #             return Wav2Vec2ForCTCWithTransformer
-        #         elif len(layers) == 4 and layers[3].value == 'ctc':
-        #             raise NotImplementedError("Loading function can't handle passing kwargs yet, which are required here.")
-        #             return Wav2Vec2ForCTCWithTransformerL2
-        # raise NotImplementedError(f"Model architecture for {layers} unknown.")
+        if spec.base.architecture == 'Wav2Vec2':
+            return Wav2Vec2LoanwordsModel
+        elif spec.base.architecture == 'MFCC':
+            return MFCCLoanwordsModel
+        else:
+            raise NotImplementedError(f"Unknown model architecture {spec.base.architecture}!")
 
     def load_model(self) -> PreTrainedModel:
         """Loads a model given a specification."""

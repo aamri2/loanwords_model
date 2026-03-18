@@ -98,7 +98,7 @@ class ProbabilitiesMap(Mapping):
     def js_divergence_histogram(self, key1: str | ProbabilitySpec | HumanProbabilitySpec, key2: str | ProbabilitySpec | HumanProbabilitySpec | Sequence[str | ProbabilitySpec | HumanProbabilitySpec], *args, **kwargs):
         if not isinstance(key2, str) and isinstance(key2, Sequence):
             for key in key2:
-                self.js_divergence(key1, key, *args, **kwargs)
+                self.js_divergence_histogram(key1, key, *args, **kwargs)
             return
         plt.figure()
         js_divergence = self.js_divergence(key1, key2, *args, **kwargs)

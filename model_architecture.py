@@ -3,6 +3,7 @@
 import torch
 from torch import nn
 from transformers import Wav2Vec2PreTrainedModel, Wav2Vec2Model, Wav2Vec2ForCTC, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
+from transformers.configuration_utils import PretrainedConfig
 from transformers.feature_extraction_utils import BatchFeature
 from transformers.modeling_outputs import CausalLMOutput
 from transformers.data.data_collator import DataCollatorWithPadding
@@ -10,6 +11,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers import Wav2Vec2Config
 from typing import Dict, List, Optional, Union, Any
 from dataclasses import dataclass
+from torchaudio.transforms import MFCC
 import math
 
 # try max pooling on the logits (i.e. maximum per classification over time) and use that
@@ -744,15 +746,13 @@ class Wav2Vec2ForCTCWithTransformerL2(Wav2Vec2ForCTCWithTransformer):
             loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions # type: ignore # can't tell tensor dtype
         )
 
-class Wav2Vec2LoanwordsConfig(Wav2Vec2Config):
+class LoanwordsConfig(PretrainedConfig):
     """
+    Base class for loanwords project configurations.
+
     Offers additional configuration parameters specific to the loanwords
     project, including parameters that affect the structure of the model heads.
     These are designed to allow models to be more-or-less fully specified from specs.
-    Defaults correspond to simply having a Wav2Vec2Model.
-
-    Inherits from [`Wav2Vec2Config`]. Read the documentation from
-    [`Wav2Vec2Config`] for more information.
 
     Args:
         transform_hidden_outputs (`bool`, *optional*, defaults to False):
@@ -795,17 +795,17 @@ class Wav2Vec2LoanwordsConfig(Wav2Vec2Config):
     def __init__(
         self,
         *,
-        transform_hidden_outputs = False,
-        ctc_head = False,
-        l2_head = False,
+        transform_hidden_outputs: bool = False,
+        ctc_head: bool = False,
+        l2_head: bool = False,
         l2_vocab_size: int = 32,
-        append_hidden_outputs = False,
-        temporal_pooling = None,
-        max_pooling_windows = 1,
-        preclassifier_activation_function = None,
-        classifier_head = False,
-        classifier_hidden = False,
-        classifier_hidden_size = None,
+        append_hidden_outputs: bool = False,
+        temporal_pooling: str | None = None,
+        max_pooling_windows: int = 1,
+        preclassifier_activation_function: str | None = None,
+        classifier_head: bool = False,
+        classifier_hidden: bool = False,
+        classifier_hidden_size: int | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -828,6 +828,10 @@ class Wav2Vec2LoanwordsConfig(Wav2Vec2Config):
         self.classifier_head = classifier_head
         self.classifier_hidden = classifier_hidden
         self.classifier_hidden_size = classifier_hidden_size
+
+class Wav2Vec2LoanwordsConfig(Wav2Vec2Config, LoanwordsConfig):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
 class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
     """
@@ -1029,6 +1033,192 @@ class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
         for param in self.wav2vec2.parameters():
             param.requires_grad = False
 
+class MFCCLoanwordsConfig(LoanwordsConfig):
+    """
+    Config for MFCCLoanwordsModel.
+    
+    Args:
+        n_mfcc (`int`, *optional*, defaults to 40):
+            Number of MFC coefficients to use.
+        sample_rate (`int`, *optional*, defaults to 16000):
+            Sampling rate of the audio.
+    """
+
+    def __init__(self, 
+        n_mfcc: int = 40,
+        sample_rate: int = 16000,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.n_mfcc = n_mfcc
+        self.sample_rate = sample_rate
+
+class MFCCLoanwordsModel(PreTrainedModel):
+    """Like Wav2Vec2LoanwordsModel but with MFCCs."""
+
+    config_class = MFCCLoanwordsConfig
+    
+    def __init__(self, config: MFCCLoanwordsConfig):
+        super().__init__(config)
+        self.mfcc = MFCC(n_mfcc=config.n_mfcc, sample_rate=config.sample_rate)
+        output_size = config.n_mfcc
+    
+        # transformer?
+        if config.transform_hidden_outputs:
+            self.transformer = nn.TransformerEncoder(
+                encoder_layer=nn.TransformerEncoderLayer(d_model=output_size, nhead=8, dim_feedforward=output_size, batch_first=True),
+                num_layers=6
+            )
+
+        # CTC and L2 heads?
+        if config.ctc_head:
+            self.dropout = nn.Dropout(config.final_dropout)
+            self.lm_head = nn.Linear(output_size, config.vocab_size)
+            output_size = config.vocab_size
+            if config.l2_head:
+                self.l2_head = nn.Linear(config.vocab_size, config.l2_vocab_size)
+                output_size = config.l2_vocab_size
+            if config.append_hidden_outputs:
+                output_size += config.output_hidden_size
+
+        # classifier head and temporal pooling?
+        if config.classifier_head:
+            if config.temporal_pooling == 'max':
+                max_pooling_layers = []
+                if not config.max_pooling_windows or config.max_pooling_windows < 1:
+                    raise ValueError(f"Max pooling requires a positive integer value for max_pooling_windows, but received {config.max_pooling_windows}.")
+                max_pooling_layers.append(nn.AdaptiveMaxPool1d(config.max_pooling_windows))
+                if config.max_pooling_windows > 1:
+                    max_pooling_layers.append(nn.Linear(config.max_pooling_windows, 1))
+                if config.preclassifier_activation_function:
+                    if config.preclassifier_activation_function == 'relu':
+                        max_pooling_layers.append(nn.ReLU())
+                    else:
+                        raise ValueError(f"Unknown preclassifier activation function: {config.preclassifier_activation_function}")
+                self.max_pooling = nn.Sequential(*max_pooling_layers)
+            elif config.temporal_pooling == 'attn':
+                if config.ctc_head and config.append_hidden_outputs:
+                    raise ValueError("Cannot currently perform Attention pooling with hidden outputs appended!")
+                self.attention_pooling = AttentionPooling(output_size)
+            elif config.temporal_pooling == 'mean':
+                self.mean_pooling = nn.AdaptiveAvgPool1d(1)
+            else:
+                raise ValueError(f'Unknown temporal pooling method: {config.temporal_pooling}.')
+            if not config.classifier_hidden:
+                self.classifier = nn.Linear(output_size, config.num_labels)
+            else:
+                if not config.classifier_hidden_size:
+                    config.classifier_hidden_size = (output_size + config.num_labels) // 2
+                self.classifier = nn.Sequential(
+                    nn.Linear(output_size, config.classifier_hidden_size),
+                    nn.Linear(config.classifier_hidden_size, config.num_labels)
+                )
+        self.config = config
+        self.post_init()
+
+    def forward(
+        self,
+        input_values: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        output_attentions: bool | None = None,
+        return_dict: bool | None = None,
+        labels: torch.Tensor | None = None,
+        frame_mask: torch.Tensor | None = None,
+        **kwargs,
+    ) -> tuple | CausalLMOutput:
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        outputs = self.mfcc(input_values)
+
+        hidden_states = outputs.transpose(1, 2)
+        if frame_mask is not None:
+            # adjust to actual length from estimate
+            if frame_mask.shape[1] < hidden_states.shape[1]:
+                frame_mask = torch.nn.functional.pad(frame_mask, (0, hidden_states.shape[1] - frame_mask.shape[1]), value = 0.0)
+            elif frame_mask.shape[1] > hidden_states.shape[1]:
+                frame_mask = frame_mask[:, :hidden_states.shape[1]]
+            frame_mask = frame_mask.unsqueeze(-1).type_as(hidden_states)
+            hidden_states = hidden_states * frame_mask
+        
+        if self.config.transform_hidden_outputs:
+            hidden_states = self.transformer(hidden_states)
+        
+        logits = hidden_states
+        if self.config.ctc_head:
+            logits = self.dropout(logits)
+            logits = self.lm_head(logits)
+            if self.config.l2_head:
+                logits = self.l2_head(logits)
+        
+        if self.config.classifier_head:
+            if self.config.temporal_pooling == 'max':
+                logits = self.max_pooling(logits.transpose(1, 2)).flatten(1)
+            elif self.config.temporal_pooling == 'mean':
+                if self.config.ctc_head and self.config.append_hidden_outputs:
+                    logits = torch.cat(
+                        [self.mean_pooling(logits.transpose(1, 2)).flatten(1),
+                        self.mean_pooling(hidden_states.transpose(1, 2)).flatten(1)],
+                        dim=-1
+                    )
+                else:
+                    logits = self.mean_pooling(logits.transpose(1, 2)).flatten(1) # by default pools the other way
+            elif self.config.temporal_pooling == 'attn':
+                logits = self.attention_pooling(hidden_states)
+            logits = self.classifier(logits)
+        
+        loss = None
+        if labels is not None:
+            if self.config.problem_type is None:
+                if self.config.ctc_head and not self.config.classifier_head:
+                    self.config.problem_type = 'ctc'
+                if self.config.num_labels == 1:
+                    self.config.problem_type = "regression"
+                elif self.config.num_labels > 1 and labels.dtype in (torch.long, torch.int):
+                    self.config.problem_type = "single_label_classification"
+                else:
+                    self.config.problem_type = "multi_label_classification"
+            if self.config.problem_type == 'ctc':
+                # retrieve loss input_lengths from attention_mask
+                attention_mask = (
+                    attention_mask if attention_mask is not None else torch.ones_like(input_values, dtype=torch.long)
+                )
+                input_lengths = self._get_feat_extract_output_lengths(attention_mask.sum(-1)).to(torch.long) # type: ignore # can't tell tensor dtype
+
+                # assuming that padded tokens are filled with -100
+                # when not being attended to
+                labels_mask = labels >= 0
+                target_lengths = labels_mask.sum(-1)
+                flattened_targets = labels.masked_select(labels_mask)
+
+                # ctc_loss doesn't support fp16
+                log_probs = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).transpose(0, 1)
+
+                with torch.backends.cudnn.flags(enabled=False):
+                    loss = nn.functional.ctc_loss(
+                        log_probs,
+                        flattened_targets,
+                        input_lengths,
+                        target_lengths,
+                        blank=self.config.pad_token_id,
+                        reduction=self.config.ctc_loss_reduction,
+                        zero_infinity=self.config.ctc_zero_infinity,
+                    )
+            else:
+                if self.config.problem_type == "regression":
+                    loss_fn = nn.MSELoss()
+                elif self.config.problem_type == "single_label_classification":
+                    loss_fn = nn.CrossEntropyLoss()
+                elif self.config.problem_type == "multi_label_classification":
+                    loss_fn = nn.BCEWithLogitsLoss()
+                loss = loss_fn(logits, labels)
+
+        if not return_dict:
+            output = (logits,)
+            return ((loss,) + output) if loss is not None else output
+
+        return CausalLMOutput(
+            loss=loss, logits=logits # type: ignore # can't tell tensor dtype
+        )
+    
 
 @dataclass
 class DataCollatorCTCWithPadding: # from https://huggingface.co/blog/fine-tune-wav2vec2-english
