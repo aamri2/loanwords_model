@@ -1288,7 +1288,8 @@ class DataCollatorWithPaddingForClassification(DataCollatorWithPadding):
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
         batch = super().__call__(features)
-        batch['labels'] = batch['labels'].long()
+        if 'labels' in batch.keys():
+            batch['labels'] = batch['labels'].long()
         return batch
 
 @dataclass
