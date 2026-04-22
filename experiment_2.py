@@ -50,6 +50,8 @@ for model_dataset in model_datasets.keys():
                     classifier_head=True,
                     classifier_hidden=True,
                 )
+                if isinstance(model, Wav2Vec2LoanwordsModel):
+                    model.freeze_base_model()
 
                 train_dataset = datasets.concatenate_datasets([model_datasets[model_dataset][f'fold_{i}'] for i in range(10) if i != k])
                 test_dataset = model_datasets[model_dataset][f'fold_{k}']

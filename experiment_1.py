@@ -43,6 +43,7 @@ for model_config in model_configs.keys():
                 use_weighted_layer_sum=True,
                 **model_configs[model_config]
             )
+            model.freeze_base_model()
 
             train_dataset = datasets.concatenate_datasets([wvENResponses10Fold[f'fold_{i}'] for i in range(10) if i != k])
             test_dataset = wvENResponses10Fold[f'fold_{k}']
