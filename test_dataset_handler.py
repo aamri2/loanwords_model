@@ -3,7 +3,7 @@ from model_handler import Model
 from dataset_handler import audio_to_input_values
 from base_model_handler import Base
 import pandas as pd
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, overload
 from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict, Audio
 from transformers import Wav2Vec2FeatureExtractor
 from functools import cache
@@ -102,12 +102,16 @@ class TestDatasetMap(Mapping):
     def __init__(self, map=()):
         self._map = dict(map)
 
-    def __getitem__(self, key: str | TestDatasetSpec | Sequence[str | TestDatasetSpec]):
+    @overload
+    def __getitem__(self, key: str | TestDatasetSpec) -> TestDataset: ...
+    @overload
+    def __getitem__(self, key: Sequence[str | TestDatasetSpec]) -> tuple[TestDataset, ...]: ...
+    def __getitem__(self, key: str | TestDatasetSpec | Sequence[str | TestDatasetSpec]) -> TestDataset | tuple[TestDataset, ...]:
         if not (isinstance(key, (str, TestDatasetSpec)) or (isinstance(key, Sequence) and all(isinstance(k, (str, TestDatasetSpec)) for k in key))):
             raise TypeError('Probability specification must be a string or list of strings!')
         
-        if isinstance(key, Sequence):
-            return [self.__getitem__(k) for k in key]
+        if isinstance(key, Sequence) and not isinstance(key, str):
+            return tuple(self.__getitem__(k) for k in key)
         
         key = str(key)
         if key not in self._map.keys():
@@ -127,3 +131,5 @@ class TestDatasetMap(Mapping):
     
     def __len__(self):
         return len(self._map)
+
+t = TestDatasetMap()

@@ -5,19 +5,14 @@ with an accompanying vocabulary. Uses the Spec framework to
 manage the relevant specifications.
 """
 
-from spec import ModelSpec, BaseSpec, LayerSpec, TrainingSpec, _SEPARATOR
-from model_architecture import Wav2Vec2WithAttentionClassifier, Wav2Vec2ForCTCWithTransformer, Wav2Vec2ForCTCWithAttentionClassifier, Wav2Vec2ForCTCWithTransformerL2, Wav2Vec2ForCTCWithMaxPooling, Wav2Vec2ForCTCWithMaxPoolingReLU
-import pandas, numpy
-import scipy
-import sklearn
-import seaborn.objects
+from spec import ModelSpec, LayerSpec, _SEPARATOR
+from model_architecture import *
+import pandas
 import torch
 import json
-from transformers import Wav2Vec2ForCTC, Wav2Vec2Config, AutoModel, Wav2Vec2FeatureExtractor
 from transformers.modeling_utils import PreTrainedModel
 from datasets import Dataset
-from typing import Union, Self, Optional, Any, Callable
-import seaborn
+from typing import Any, Callable
 import matplotlib.pyplot as plt
 import collections
 from base_model_handler import Base
@@ -53,27 +48,12 @@ class Model():
         Huggingface model class.
         """
 
-        layers = spec.layers
-        if layers[0].architecture == 'Wav2Vec2':
-            if len(layers) >= 2 and layers[1].value == 'ctc':
-                if len(layers) == 2:
-                    return Wav2Vec2ForCTC
-                elif len(layers) == 4 and layers[3].value == 'class':
-                    if layers[2].value == 'attn':
-                        return Wav2Vec2ForCTCWithAttentionClassifier
-                    elif layers[2].value == 'max':
-                        return Wav2Vec2ForCTCWithMaxPooling
-                elif len(layers) == 5 and layers[2].value == 'max' and layers[3].value == 'relu' and layers[4].value == 'class':
-                    return Wav2Vec2ForCTCWithMaxPoolingReLU
-            elif len(layers) == 3 and layers[1].value == 'attn' and layers[2].value == 'class':
-                return Wav2Vec2WithAttentionClassifier
-            elif len(layers) >= 3 and layers[1].value == 'transformer' and layers[2].value == 'ctc':
-                if len(layers) == 3:
-                    return Wav2Vec2ForCTCWithTransformer
-                elif len(layers) == 4 and layers[3].value == 'ctc':
-                    raise NotImplementedError("Loading function can't handle passing kwargs yet, which are required here.")
-                    return Wav2Vec2ForCTCWithTransformerL2
-        raise NotImplementedError(f"Model architecture for {layers} unknown.")
+        if spec.base.architecture == 'Wav2Vec2':
+            return Wav2Vec2LoanwordsModel
+        elif spec.base.architecture == 'MFCC':
+            return MFCCLoanwordsModel
+        else:
+            raise NotImplementedError(f"Unknown model architecture {spec.base.architecture}!")
 
     def load_model(self) -> PreTrainedModel:
         """Loads a model given a specification."""
@@ -84,8 +64,11 @@ class Model():
     def get_model_vocab(self) -> dict[str, int]:
         """Loads a model's vocabulary given a specification."""
 
-        with open(self.path + '/vocab.json', encoding = 'utf-8') as f:
-            vocab = json.load(f)
+        try:
+            with open(self.path + '/vocab.json', encoding = 'utf-8') as f:
+                vocab = json.load(f)
+        except FileNotFoundError:
+            vocab = self.model.config.label2id
         return vocab
     
     def add_layer(self, layer_spec: str | LayerSpec | tuple[LayerSpec, ...]) -> PreTrainedModel:
@@ -177,74 +160,6 @@ def probabilities(model, dataset: Dataset, id2label = None, **kwargs):
             data[column_name].extend([row[column_name]] * len(probabilities))
     
     return pandas.DataFrame(data).astype({'probabilities': float})
-
-def mae(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any) -> float:
-    """Returns the mean absolute log error between the pooled probabilities."""
-
-    p = pool(probabilities_p, *args, **kwargs).to_numpy()
-    q = pool(probabilities_q, *args, **kwargs).to_numpy()
-    MAE = numpy.mean(numpy.abs(p - q)).item()
-    return MAE
-
-def pairwise_cosine_similarity(probabilities: pandas.DataFrame, by: str, *args: str, **kwargs: Any):
-    """Returns pairwise cosine similarities, with a matrix of 'by'."""
-
-    p = pool(probabilities, by, *args, **kwargs)
-    cosine_similarity = sklearn.metrics.pairwise.cosine_similarity(p)
-    return pandas.DataFrame(cosine_similarity, index=p.index, columns=p.index)
-
-def pairwise_cosine_similarity_heatmap(probabilities: Union[pandas.DataFrame, list[pandas.DataFrame]], by: str, *args: str, **kwargs: Any):
-    """Heatmap of pairwise cosine similarities, with a matrix of 'by'."""
-
-    if not isinstance(probabilities, list):
-        probabilities = [probabilities]
-    for probability in probabilities:
-        plt.figure()
-        p = pairwise_cosine_similarity(probability, by, *args, **kwargs)
-        seaborn.heatmap(p, cmap = 'crest', square = True, vmin = 0, vmax = 1)
-    plt.show()
-
-def jensen_shannon_divergence(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any) -> float:
-    """Returns the row-wise Jensen-Shannon divergences between the pooled probabilities."""
-
-    p = pool(probabilities_p, *args, **kwargs).to_numpy()
-    q = pool(probabilities_q, *args, **kwargs).to_numpy()
-    m = (p + q)/2 # mixture distribution
-
-    d_p_m = (p*(numpy.log(p.clip(min=1e-16)) - numpy.log(m.clip(min=1e-16)))).sum(1)
-    d_q_m = (q*(numpy.log(q.clip(min=1e-16)) - numpy.log(m.clip(min=1e-16)))).sum(1)
-    js_div = 0.5*(d_p_m + d_q_m)
-    return js_div
-
-def mean_jensen_shannon_divergence(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any) -> float:
-    """Returns the mean row-wise Jensen-Shannon divergences between the pooled probabilities."""
-
-    js_div = jensen_shannon_divergence(probabilities_p, probabilities_q, *args, **kwargs)
-    return sum(js_div)/len(js_div)
-
-
-def mutual_information(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any) -> float:
-    """Returns the mutual information between the pooled probabilities."""
-
-    # H(x, y)
-    #joint_entropy = scipy.spatial.distance.jensenshannon(probabilities_p, probabilities_q)
-    mutual_information = torch.nn.functional.kl_div(torch.log(torch.tensor(probabilities_p.values)), torch.tensor(probabilities_q.values)).item()
-    # mutual_information = 
-
-def diffmap(probabilities_p: pandas.DataFrame, probabilities_q: pandas.DataFrame, *args: str, **kwargs: Any):
-    """Displays a heatmap of the squared difference between the two probabilities."""
-
-    p = pool(probabilities_p, *args, **kwargs)
-    q = pool(probabilities_q, *args, **kwargs)
-    diff = p - q
-    diff = numpy.abs(diff)
-    seaborn.heatmap(diff, cmap = 'crest', square = True, vmax=1, vmin=0)
-    plt.text(0.8, 0.8, f'MAE: {mae(probabilities_p, probabilities_q)}')
-    plt.show()
-    
-
-
-
 
 def ctc_beam_search_cvc(logits, consonant_ids: list[int], vowel_id2label: dict[int, str], padding_token_id: int, beam_width: int = 1):
     """Custom CTC beam search that looks for a CVC sequence."""
