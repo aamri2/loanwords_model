@@ -9,22 +9,18 @@ from transformers import Wav2Vec2FeatureExtractor
 from functools import cache
 
 _WV_AUDIO_PATH = '../stimuli_world_vowels/'
-_WV_METADATA_PATH = 'WorldVowels_stimuli.csv'
+_WV_METADATA_PATH = '../human_vowel_responses.csv'
 _WV_FORMANTS_PATH = '../stimuli_world_vowels/formants/world_vowels_formants.csv'
 
 def load_wv_dataset(path = _WV_AUDIO_PATH) -> Dataset:
     """Loads and prepares WV Dataset for use as a test dataset (without labels)."""
     
-    metadata = pd.read_csv(_WV_METADATA_PATH)
-    with open(path + 'audio_files.txt') as f:
-        files = f.readlines()
-    files = [file.strip() for file in files]
-    metadata = metadata[metadata['#file_extract'].isin(files)]
+    metadata = pd.read_csv(_WV_METADATA_PATH).groupby('filename').first()
     dataset = Dataset.from_dict({
-        'audio': [f'{path}{file}' for file in metadata['#file_extract'] if file in files],
-        'language': metadata['language'],
+        'audio': path + metadata.index + '.wav',
+        'language': metadata['language_stimuli'],
         'vowel': metadata['#phone'],
-        'file': metadata['index']
+        'file': metadata.index,
     }).cast_column('audio', Audio())
 
     dataset = audio_to_input_values(dataset, Wav2Vec2FeatureExtractor())
@@ -34,7 +30,11 @@ def load_wv_dataset(path = _WV_AUDIO_PATH) -> Dataset:
 def load_wv_metadata(path = _WV_METADATA_PATH) -> pd.DataFrame:
     """Loads and prepares WV metadata for use as a test dataset."""
 
-    return pd.read_csv(path).rename({'index': 'file'}, axis = 1)
+    metadata = pd.read_csv(path).groupby('filename').first().reset_index()
+    metadata = metadata[['#phone', 'language_stimuli', 'filename', 'prev_phone', 'next_phone']]
+    metadata['context'] = metadata['prev_phone'] + '_' + metadata['next_phone']
+    metadata = metadata.rename({'filename': 'file', 'language_stimuli': 'language', '#phone': 'vowel'}, axis = 1)
+    return metadata
 
 def load_wv_formants(dataset: 'TestDataset') -> pd.DataFrame:
     """Loads and prepares WV formants in a DataFrame."""

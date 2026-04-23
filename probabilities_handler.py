@@ -75,7 +75,7 @@ class Probabilities():
         plt.title(f'{self.spec} entropies (by {args}, {kwargs})', wrap=True)
         plt.show(block = False)
 
-    def load_probabilities(self, prefix: str = _PROBABILITIES_PREFIX, model_kwargs: dict[str, Any] = {}) -> pd.DataFrame:
+    def load_probabilities(self, prefix: str = _PROBABILITIES_PREFIX) -> pd.DataFrame:
         """Loads fully-prepared probabilities from a specification. Attempts to create them if missing."""
 
         try:
@@ -128,10 +128,12 @@ class Probabilities():
         """Adds a column indicating which files were present in the training dataset for the model."""
 
         training_dataset = TrainingDataset(self.spec.model.training[-1].training_dataset if isinstance(self.spec.model.training, tuple) else self.spec.model.training.training_dataset)
-        df = cast(pd.DataFrame, training_dataset.get_split(self.model.training_split).to_pandas())
-        if not 'file' in df.columns and 'input_values' in df.columns:
-            df = self._add_files(df)
-        probabilities['training'] = probabilities['file'].isin(df['file'])
+        train_df = cast(pd.DataFrame, training_dataset.get_split(self.model.training_split).to_pandas())
+        test_df = cast(pd.DataFrame, training_dataset.get_split(self.model.eval_split).to_pandas())
+        if not 'file' in train_df.columns and 'input_values' in train_df.columns:
+            train_df = self._add_files(train_df)
+            test_df = self._add_files(train_df)
+        probabilities['training'] = probabilities['file'].case_when(caselist=[(probabilities['file'].isin(train_df['file']), 'train'), (probabilities['file'].isin(test_df['file']), 'test'), (pd.Series(True, index=probabilities.index), 'no')])
         return probabilities
     
     def _add_files(self, df: pd.DataFrame):
@@ -139,7 +141,7 @@ class Probabilities():
 
         test_df = cast(pd.DataFrame, self.test_dataset.dataset.to_pandas())
         input_values = test_df['input_values'].apply(tuple)
-        df['file'] = df.apply(lambda row: test_df['file'][input_values == tuple(row['input_values'])].item(), axis=1)
+        df['file'] = df.apply(lambda row: next(iter(test_df['file'][input_values == tuple(row['input_values'])]), None), axis=1) # allow for unrecognized files
         return df
     
     def __repr__(self) -> str:
