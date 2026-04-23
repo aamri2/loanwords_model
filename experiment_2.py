@@ -86,6 +86,7 @@ for model_dataset in model_datasets.keys():
 
                 trainer.train()
                 trainer.save_model(f'm_{model_config}_{model_dataset}_cross_{k}')
+                print(f'Saved model m_{model_config}_{model_dataset}_cross_{k}.')
                 del trainer
                 del model
                 del train_dataset

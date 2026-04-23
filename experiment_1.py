@@ -77,7 +77,8 @@ for model_config in model_configs.keys():
             )
 
             trainer.train()
-            trainer.save_model(f'm_{model_config}_cross_{k}')
+            trainer.save_model(f'm_w2v2_{model_config}_cross_{k}')
+            print(f'Saved model m_w2v2_{model_config}_cross_{k}.')
             del trainer
             del model
             del train_dataset
