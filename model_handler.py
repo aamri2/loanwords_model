@@ -32,9 +32,9 @@ class Model():
     model: PreTrainedModel
     vocab: dict[str, int]
 
-    def __init__(self, spec: str | ModelSpec, path: str | None = None):
+    def __init__(self, spec: str | ModelSpec, path: str = _MODEL_PATH):
         self.spec = ModelSpec(spec)
-        self.path = path if path else f'{_MODEL_PATH}{_MODEL_PREFIX}{_SEPARATOR}{self.spec}'
+        self.path = path
         self.model = self.load_model()
         self.vocab = self.get_model_vocab()
     
@@ -59,7 +59,7 @@ class Model():
         """Loads a model given a specification."""
 
         model_class = self.get_model_class(self.spec)
-        return model_class.from_pretrained(self.path)
+        return model_class.from_pretrained(f'{self.path}{_MODEL_PREFIX}{_SEPARATOR}{self.spec}')
 
     def get_model_vocab(self) -> dict[str, int]:
         """Loads a model's vocabulary given a specification."""

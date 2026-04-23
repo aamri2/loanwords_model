@@ -17,19 +17,20 @@ class ProbabilitiesMap(Mapping):
     If autoload, prints the autoloaded probabilities.
     """
     
-    def __init__(self, map = (), autoload = False):
+    def __init__(self, map = (), autoload = False, path: str = _PROBABILITIES_PATH):
         self._map: dict[str | ProbabilitySpec | HumanProbabilitySpec, Probabilities] = dict(map)
+        self.path = path
         
         if autoload:
             self.autoload_probabilities()
 
-    def load(self, spec: str | ProbabilitySpec | HumanProbabilitySpec) -> None:
+    def load(self, spec: str | ProbabilitySpec | HumanProbabilitySpec, *args, **kwargs) -> None:
         spec = str(spec)
         try:
-            self._map[spec] = Probabilities(spec)
+            self._map[spec] = Probabilities(spec, *args, path=self.path, **kwargs)
         except (ValueError, NotImplementedError):
             try:
-                self._map[spec] = HumanProbabilities(spec)
+                self._map[spec] = HumanProbabilities(spec, *args, **kwargs)
             except (ValueError, NotImplementedError):
                 raise ValueError(f"Invalid probability spec: {spec}.")
 
@@ -67,16 +68,16 @@ class ProbabilitiesMap(Mapping):
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}({repr(self._map)})'
     
-    def autoload_probabilities(self, path: str = _PROBABILITIES_PATH) -> None:
-        probabilities = self.find_probabilities(path = path)
+    def autoload_probabilities(self) -> None:
+        probabilities = self.find_probabilities()
         for probability in probabilities:
             try:
                 self.load(probability)
             except ValueError:
                 warnings.warn(f"Failed to load probability with spec {probability[2:-4]}. Continuing...", UserWarning)
 
-    def find_probabilities(self, path: str = _PROBABILITIES_PATH) -> tuple[str, ...]:
-        paths = glob.glob(f'{_PROBABILITIES_PREFIX}{_SEPARATOR}*.csv', root_dir=path)
+    def find_probabilities(self) -> tuple[str, ...]:
+        paths = glob.glob(f'{_PROBABILITIES_PREFIX}{_SEPARATOR}*.csv', root_dir=self.path)
         probabilities = tuple(path[2: - 4] for path in paths)
         return probabilities
     
@@ -121,16 +122,17 @@ class ProbabilitiesMap(Mapping):
         plt.title(f'JS-divs btwn {key1}, {key2}', wrap=True)
         plt.show(block=False)
 
-def run_new_models(p: ProbabilitiesMap):
-    """Runs and saves all classification (contains class) models in _MODEL_DIR on wv."""
+def run_new_models(p: ProbabilitiesMap, model_path=_MODEL_PATH):
+    """Runs and saves all classification (contains class) models in a given path on wv."""
 
-    models = [model[len(_MODEL_PREFIX + _SEPARATOR):] for model in glob.glob(f'{_MODEL_PREFIX}*class*', root_dir=_MODEL_PATH)] # remove m_
+    models = [model[len(_MODEL_PREFIX + _SEPARATOR):] for model in glob.glob(f'{_MODEL_PREFIX}*class*', root_dir=model_path)] # remove m_
     old_models = [probability[:-3] for probability in p.find_probabilities()] # remove _wv
     new_models = set(models).difference(old_models)
     for model in tqdm(new_models, desc='Running models'):
+        p.load(f'{model}_wv', model_kwargs={'path': model_path})
         p[f'{model}_wv']\
             .probabilities[['probabilities', 'classification', 'language', 'vowel', 'file']]\
-            .to_csv(f'{_PROBABILITIES_PATH}{_PROBABILITIES_PREFIX}{_SEPARATOR}{model}_wv.csv')
+            .to_csv(f'{p.path}{_PROBABILITIES_PREFIX}{_SEPARATOR}{model}_wv.csv')
 
 def mean_cross_validations(p: ProbabilitiesMap):
     """
@@ -144,4 +146,4 @@ def mean_cross_validations(p: ProbabilitiesMap):
         ps = [p[f'{probability}_{i}_wv'].probabilities for i in range(10)]
         p0 = ps[0]
         p0['probabilities'] = pd.concat([pi['probabilities'] for pi in ps], axis = 1).mean(axis = 1)
-        p0[['probabilities', 'classification', 'language', 'vowel', 'file']].to_csv(f'{_PROBABILITIES_PATH}{_PROBABILITIES_PREFIX}{_SEPARATOR}{probability}_N_wv.csv')
+        p0[['probabilities', 'classification', 'language', 'vowel', 'file']].to_csv(f'{p.path}{_PROBABILITIES_PREFIX}{_SEPARATOR}{probability}_N_wv.csv')

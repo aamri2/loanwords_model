@@ -8,7 +8,8 @@ import seaborn as sns
 import numpy as np
 from scipy import stats
 from matplotlib import pyplot as plt
-from typing import cast
+from typing import cast, Sequence, Any
+from math import prod
 
 _PROBABILITIES_PATH = 'probabilities/'
 _PROBABILITIES_PREFIX = 'p'
@@ -23,10 +24,12 @@ class Probabilities():
     test_dataset: TestDataset
     probabilities: pd.DataFrame
 
-    def __init__(self, spec: str | ProbabilitySpec):
+    def __init__(self, spec: str | ProbabilitySpec, path: str = _PROBABILITIES_PATH, prefix: str = _PROBABILITIES_PREFIX, model_kwargs: dict[str, Any] = {}):
         self.spec = ProbabilitySpec(spec)
+        self.path = path
         self.test_dataset = t[self.spec.test_dataset]
-        self.probabilities = self.load_probabilities()
+        self.model = Model(self.spec.model, **model_kwargs)
+        self.probabilities = self.load_probabilities(prefix=prefix)
 
     def pool(self, *args: str, **kwargs: str) -> pd.DataFrame:
         """
@@ -66,15 +69,15 @@ class Probabilities():
         plt.title(f'{self.spec} entropies (by {args}, {kwargs})', wrap=True)
         plt.show(block = False)
 
-    def load_probabilities(self, path = _PROBABILITIES_PATH, prefix = _PROBABILITIES_PREFIX) -> pd.DataFrame:
+    def load_probabilities(self, prefix: str = _PROBABILITIES_PREFIX, model_kwargs: dict[str, Any] = {}) -> pd.DataFrame:
         """Loads fully-prepared probabilities from a specification. Attempts to create them if missing."""
 
         try:
-            probabilities = pd.read_csv(f'{path}{prefix}{_SEPARATOR}{self.spec}.csv')
+            probabilities = pd.read_csv(f'{self.path}{prefix}{_SEPARATOR}{self.spec}.csv')
         except:
             if 'max' in str(self.spec) or 'mean' in str(self.spec):
-                label2id = Model(self.spec.model).vocab
-                probabilities = legacy_probabilities(Model(self.spec.model).model, self.test_dataset.dataset, id2label = {v: k for k, v in label2id.items()})
+                label2id = self.model.vocab
+                probabilities = legacy_probabilities(self.model.model, self.test_dataset.dataset, id2label = {v: k for k, v in label2id.items()})
             else:
                 raise NotImplementedError("Cannot dynamically generate probabilities yet.")
         
