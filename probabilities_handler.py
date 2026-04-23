@@ -1,6 +1,7 @@
 from spec import ProbabilitySpec, HumanProbabilitySpec, _SEPARATOR
 from datasets import Dataset
 from test_dataset_handler import t, TestDataset
+from dataset_handler import TrainingDataset
 from model_handler import Model
 from model_handler import probabilities as legacy_probabilities
 import pandas as pd
@@ -42,8 +43,13 @@ class Probabilities():
         probabilities = self.probabilities
 
         if kwargs:
-            filter = zip(*[probabilities[column] == value for column, value in kwargs.items()])
-            probabilities = probabilities[[all(row) for row in filter]]
+            mask = pd.Series(True, index=probabilities.index)
+            for column, value in kwargs.items():
+                if not isinstance(value, str) and isinstance(value, Sequence):
+                    mask = mask & probabilities[column].isin(value)
+                else:
+                    mask = mask & (probabilities[column] == value)
+            probabilities = probabilities.loc[mask]
         
         pooled_probabilities = probabilities.pivot_table(values = 'probabilities', columns = 'classification', index = args, sort = False)
         return pooled_probabilities
@@ -91,6 +97,10 @@ class Probabilities():
         probabilities = self._add_formants(probabilities)
         probabilities = self._add_contexts(probabilities)
         probabilities = world_vowel_sort(probabilities)
+        if isinstance(self.spec, ProbabilitySpec):
+            training_dataset = self.spec.model.training[-1].training_dataset if isinstance(self.spec.model.training, tuple) else self.spec.model.training.training_dataset
+            if training_dataset.family == self.spec.test_dataset.value:
+                probabilities = self._add_training(probabilities)
         return probabilities
     
     def _add_formants(self, probabilities: pd.DataFrame) -> pd.DataFrame:
@@ -113,6 +123,24 @@ class Probabilities():
         contexts = self.test_dataset.contexts
         probabilities = probabilities.join(contexts, on = 'file', validate = 'many_to_one')
         return probabilities
+
+    def _add_training(self, probabilities: pd.DataFrame) -> pd.DataFrame:
+        """Adds a column indicating which files were present in the training dataset for the model."""
+
+        training_dataset = TrainingDataset(self.spec.model.training[-1].training_dataset if isinstance(self.spec.model.training, tuple) else self.spec.model.training.training_dataset)
+        df = cast(pd.DataFrame, training_dataset.get_split(self.model.training_split).to_pandas())
+        if not 'file' in df.columns and 'input_values' in df.columns:
+            df = self._add_files(df)
+        probabilities['training'] = probabilities['file'].isin(df['file'])
+        return probabilities
+    
+    def _add_files(self, df: pd.DataFrame):
+        """Add file names to a DataFrame containing input_values."""
+
+        test_df = cast(pd.DataFrame, self.test_dataset.dataset.to_pandas())
+        input_values = test_df['input_values'].apply(tuple)
+        df['file'] = df.apply(lambda row: test_df['file'][input_values == tuple(row['input_values'])].item(), axis=1)
+        return df
     
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}({repr(str(self.spec))})'

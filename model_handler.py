@@ -99,6 +99,29 @@ class Model():
                 return batch
         
         return apply_model
+    
+    @property
+    def training_split(self) -> str | tuple[str, ...]:
+        """The dataset split(s) the model was trained on."""
+
+        last_training = self.spec.training[-1] if isinstance(self.spec.training, tuple) else self.spec.training
+        variant = last_training.training_dataset.variant
+        if variant and variant == '10Fold':
+            if not isinstance(last_training.training_var, tuple) or 'cross' not in [str(training_var) for training_var in last_training.training_var]:
+                raise ValueError("A model trained on a 10Fold dataset must specify a cross!")
+            training_var = tuple(str(var) for var in last_training.training_var) if isinstance(last_training.training_var, tuple) else (str(last_training.training_var),)
+            cross = training_var[training_var.index('cross') + 1]
+            if cross == 'N':
+                return tuple(f'fold_{i}' for i in range(10))
+            else:
+                try:
+                    cross = int(cross)
+                    assert 0 <= cross < 10
+                except (ValueError, AssertionError) as e:
+                    raise ValueError(f"Cross must be a number between 0 and 9. Got: {cross}.")
+                return tuple(f'fold_{i}' for i in range(10) if i != cross)
+        else:
+            return 'train'
 
 def ctc_wrapper(model: PreTrainedModel, **kwargs) -> Callable[[torch.Tensor], dict[str, torch.Tensor]]:
     """

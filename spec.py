@@ -9,7 +9,7 @@ from collections.abc import Collection
 from abc import ABC, abstractmethod, ABCMeta
 from collections import defaultdict, namedtuple
 import re
-from functools import cache
+from functools import cached_property
 
 _SEPARATOR = '_' # separator for string representations
 T = TypeVar('T')
@@ -147,8 +147,7 @@ class SpecComplex(Spec[Sequence[Spec | Sequence[Spec] | None]]):
 
         super().__init__(self, *args, values = value, **kwargs)
     
-    @property
-    @cache
+    @cached_property
     def value(self) -> NamedTuple:
         """Returns a namedtuple of all values."""
 
@@ -351,16 +350,36 @@ class FrozenSpec(SpecUnit, name = 'frozen', allowed_values = NaturalNumbers()):
         super().__init__(value, *args, **kwargs)
 
 class TrainingDatasets(Container):
-    base_datasets = ['timit', 'librispeech', 'librispeechFR', 'bl', 'wvEN', 'wvResponses', 'wvENResponses', 'wvENResponses10Fold', 'wvFRResponses10Fold', 'wvEN10Fold', 'wvFR10Fold', 'timitEV10Fold']
-    neutral_variants = ['EV', 'MV', 'S', 'A', 'CL', 'N'] # these don't affect parsing in any way
-    parser = re.compile(f"({'|'.join(base_datasets)})({'|'.join(neutral_variants)})*") # base_dataset + optional neutral_variant
+    base_datasets = ['timit', 'librispeech', 'librispeechFR', 'bl', 'wv']
+    language_variants = ['EN', 'FR'] # one language
+    neutral_variants = ['EV', 'MV', 'S', 'A', 'CL', 'N', 'Responses'] # these don't affect parsing in any way
+    special_variants = ['10Fold'] # only one special variant allowed
+    parser = re.compile(f"({'|'.join(base_datasets)})({'|'.join(language_variants)})?(?:{'|'.join(neutral_variants)})*({'|'.join(special_variants)})?") # base_dataset + optional neutral_variant + optional special_variant
 
     def __contains__(self, x: str) -> bool:
         return bool(self.parser.fullmatch(x))
     
     def family(self, x: str) -> str:
+        """The base training dataset without any variant information."""
+
         if x in self:
-            return cast(re.Match[str], self.parser.search(x)).group()
+            return cast(re.Match[str], self.parser.search(x)).group(1)
+        else:
+            raise ValueError(f"{x} is not a valid dataset.")
+    
+    def language(self, x: str) -> str | None:
+        """Language of dataset, if specified."""
+        
+        if x in self:
+            return cast(re.Match[str], self.parser.search(x)).group(2)
+        else:
+            raise ValueError(f"{x} is not a valid dataset.")
+    
+    def variant(self, x: str) -> str | None:
+        """The special variants that can affect parsing."""
+
+        if x in self:
+            return cast(re.Match[str], self.parser.search(x)).groups()[-1]
         else:
             raise ValueError(f"{x} is not a valid dataset.")
 
@@ -372,6 +391,11 @@ class TrainingDatasetSpec(SpecUnit, name = 'training_dataset', allowed_values = 
     @property
     def family(self):
         return self._allowed_values.family(self.value)
+    
+    @property
+    def variant(self):
+        return self._allowed_values.variant(self.value)
+
 
 class TrainingVars(Container):
     value: str

@@ -3,7 +3,7 @@ from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict,
 import datasets
 import json
 import pandas as pd
-from typing import Sequence, overload
+from typing import Sequence, overload, cast
 import phonemizer.separator
 import torch
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2PhonemeCTCTokenizer
@@ -33,9 +33,9 @@ class TrainingDataset():
         self.spec = TrainingDatasetSpec(spec)
         self.path = path if path else f'{_DATASET_PATH}{_DATASET_PREFIX}{_SEPARATOR}{spec}'
         self.dataset = self.load_dataset()
-        self.vocab = self.get_dataset_vocab()
-        self.consonants = get_consonants(self.spec)
-        self.vowels = get_vowels(self.spec)
+        # self.vocab = self.get_dataset_vocab() # TODO
+        # self.consonants = get_consonants(self.spec)
+        # self.vowels = get_vowels(self.spec)
     
     @property
     def vocab_path(self) -> str:
@@ -46,13 +46,20 @@ class TrainingDataset():
         
         return datasets.load_from_disk(self.path)
 
-
     def get_dataset_vocab(self) -> dict[str, int]:
         """Loads a dataset's vocabulary given its specification."""
 
         with open(self.vocab_path, encoding = 'utf-8') as f:
             vocab = json.load(f)
         return vocab
+    
+    def get_split(self, splits: str | Sequence[str]):
+        """Return the split or concatenated splits of the dataset."""
+
+        if not isinstance(splits, str) and isinstance(splits, Sequence):
+            return datasets.concatenate_datasets([cast(datasets.DatasetDict, self.dataset)[split] for split in splits])
+        else:
+            return cast(datasets.DatasetDict, self.dataset)[splits]
 
 consonants = {
     'timit': ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh'],
