@@ -3,17 +3,16 @@ from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict,
 import datasets
 import json
 import pandas as pd
-from typing import Union, cast
-from collections.abc import Callable
+from typing import Sequence, overload
 import phonemizer.separator
 import torch
-from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2CTCTokenizer, Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2PhonemeCTCTokenizer
-from transformers.feature_extraction_sequence_utils import SequenceFeatureExtractor
-from transformers.feature_extraction_utils import BatchFeature
+from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2PhonemeCTCTokenizer
 import phonemizer
 from pyacoustics.speech_filters import speech_shaped_noise
 import numpy as np
 from torchaudio.functional import forced_align, merge_tokens
+from sklearn.model_selection import StratifiedGroupKFold
+from tqdm import tqdm
 
 _DATASET_PATH = '../'
 _DATASET_PREFIX = 'prep'
@@ -226,31 +225,95 @@ def prepare_timitMV_w2v2():
     
     return throughPretrainedModel(timit, model)
 
+def process_wv_responses(wv_responses: pd.DataFrame) -> Dataset:
+    """
+    Takes a subset of the WV responses, and annotates them with
+    the columns 'audio', 'file', 'label', 'vowel', 'language',
+    and 'CVC' in a HF Dataset for further processing.
+    """
+
+    wv_responses_ds = Dataset.from_dict({
+        'audio': [f'../stimuli_world_vowels/{file}.wav' for file in wv_responses['filename']],
+        'file': wv_responses['filename'],
+        'label': wv_responses['assimilation'],
+        'vowel': wv_responses['#phone'],
+        'language': wv_responses['language_stimuli'],
+        'CVC': wv_responses['prev_phone'] + wv_responses['#phone'] + wv_responses['next_phone'],
+    })\
+        .cast_column('audio', datasets.Audio())\
+        .class_encode_column('file')\
+        .class_encode_column('label')\
+        .class_encode_column('vowel')\
+        .class_encode_column('language')\
+        .class_encode_column('CVC')\
+        .shuffle()
+        
+    return wv_responses_ds
+
+@overload
+def unannotate_dataset(dataset: Dataset) -> Dataset: ...
+@overload
+def unannotate_dataset(dataset: DatasetDict) -> DatasetDict: ...
+def unannotate_dataset(dataset: Dataset | DatasetDict) -> Dataset | DatasetDict:
+    """Remove all columns except 'input_values' and 'label(s)'."""
+
+    if isinstance(dataset, DatasetDict):
+        columns = sum(dataset.column_names.values(), start=list()) 
+    else:
+        columns = dataset.column_names
+    columns_to_remove = set(column for column in columns if column not in ['input_values', 'label', 'labels'])
+    prepared_dataset = dataset.remove_columns(list(columns_to_remove))
+    return prepared_dataset
+
+def k_fold(annotated_dataset: Dataset, k=10) -> DatasetDict:
+    """Splits an annotated dataset into 10 folds."""
+
+    sgkf = StratifiedGroupKFold(n_splits=k, shuffle=True)
+    folds = [ # indices for each held-out fold
+        annotated_dataset.select(i[1])
+        for i in sgkf.split(
+            X = np.arange(len(annotated_dataset)),
+            y = annotated_dataset['vowel'],
+            groups = annotated_dataset['file'],
+        )
+    ]
+
+    # ensure CVCs are distributed
+    files_to_move: dict[int, list[int]] = {i: list() for i in range(k)}
+    for i, fold in enumerate(folds):
+        other_folds_cvcs = set(cvc for j in range(k) if j != i for cvc in folds[j]['CVC'])
+        for cvc in set(fold['CVC']):
+            if cvc not in other_folds_cvcs:
+                if len(fold.filter(lambda row: row['CVC'] == cvc).unique('file')) > 1: # more than one file
+                    moving_candidates = fold.filter(lambda row: row['CVC'] == cvc).unique('file')
+                    file_to_move = moving_candidates[np.random.randint(len(moving_candidates))]
+                    files_to_move[i].append(file_to_move)
+    
+    for i, files in tqdm(files_to_move.items(), "Moving files"):
+        for file in files:
+            file_rows = folds[i].filter(lambda row: row['file'] == file)
+            vowel = file_rows['vowel'][0]
+            vowel_counts = {j: len(folds[j].filter(lambda row: row['vowel'] == vowel)) for j in range(k) if j != i}
+            receiving_candidates = [k for k, v in vowel_counts.items() if v == min(vowel_counts.values())] # move to fold containing fewest examples of vowel
+            fold_to_receive = receiving_candidates[np.random.default_rng().integers(len(receiving_candidates))]
+            folds[fold_to_receive] = datasets.concatenate_datasets([folds[fold_to_receive], file_rows])
+            folds[i] = folds[i].filter(lambda row: row['file'] != file)
+
+    return DatasetDict({f'fold_{i}': folds[i] for i in range(k)})
+
 def prepare_wvResponses():
     """Prepares World Vowels stimuli with individual responses as classifications."""
     
     human_responses = pd.read_csv('../human_vowel_responses.csv')
     human_responses = human_responses[human_responses['language_indiv'] == 'english']
 
-    wvResponses = Dataset.from_dict({
-        'audio': [f'../stimuli_world_vowels/{file}.wav' for file in human_responses['filename']],
-        'label': human_responses['assimilation'],
-        'vowel_language': [f'{vowel}_{language}' for vowel, language in zip(human_responses['#phone'], human_responses['language_stimuli'])],
-    }).cast_column('audio', datasets.Audio()).class_encode_column('label').class_encode_column('vowel_language')
-    
+    wvResponses = process_wv_responses(human_responses)
     wvResponses_split = wvResponses.train_test_split(0.2, 0.8, stratify_by_column = 'vowel_language')
     wvResponses_test_dev = wvResponses_split['test'].train_test_split(0.5, 0.5, stratify_by_column = 'vowel_language')
     wvResponses = DatasetDict({'train': wvResponses_split['train'], 'test': wvResponses_test_dev['train'], 'dev': wvResponses_test_dev['test']})
 
-    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
-
-    def prepare_dataset(batch):
-        audio = batch['audio']
-        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
-        return batch
-
-    prep_wvResponses = wvResponses.map(prepare_dataset, remove_columns=['audio', 'vowel_language'])
-    return prep_wvResponses
+    prep_wvResponses = audio_to_input_values(wvResponses)
+    return unannotate_dataset(prep_wvResponses)
 
 def prepare_wvENResponses():
     """Prepares World Vowels stimuli with individual responses as classifications."""
@@ -258,21 +321,9 @@ def prepare_wvENResponses():
     human_responses = pd.read_csv('../human_vowel_responses.csv')
     human_responses = human_responses[(human_responses['language_indiv'] == 'english') * (human_responses['language_stimuli'] == 'EN')]
 
-    wvENResponses = Dataset.from_dict({
-        'audio': [f'../stimuli_world_vowels/{file}.wav' for file in human_responses['filename']],
-        'label': human_responses['assimilation'],
-        'vowel': human_responses['#phone'],
-    }).cast_column('audio', datasets.Audio()).class_encode_column('label').class_encode_column('vowel').shuffle()
-    
-    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
-
-    def prepare_dataset(batch):
-        audio = batch['audio']
-        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
-        return batch
-
-    prep_wvENResponses = wvENResponses.map(prepare_dataset, remove_columns=['audio', 'vowel'])
-    return prep_wvENResponses
+    wvENResponses = process_wv_responses(human_responses)
+    prep_wvENResponses = audio_to_input_values(wvENResponses)
+    return unannotate_dataset(prep_wvENResponses)
 
 def prepare_wvENResponses10Fold():
     """Prepares World Vowels stimuli with individual responses as classifications."""
@@ -280,21 +331,9 @@ def prepare_wvENResponses10Fold():
     human_responses = pd.read_csv('../human_vowel_responses.csv')
     human_responses = human_responses[(human_responses['language_indiv'] == 'english') * (human_responses['language_stimuli'] == 'EN')]
 
-    wvENResponses = Dataset.from_dict({
-        'audio': [f'../stimuli_world_vowels/{file}.wav' for file in human_responses['filename']],
-        'label': human_responses['assimilation'],
-        'vowel': human_responses['#phone'],
-    }).cast_column('audio', datasets.Audio()).class_encode_column('label').class_encode_column('vowel').shuffle()
-    
-    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
-
-    def prepare_dataset(batch):
-        audio = batch['audio']
-        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
-        return batch
-
-    prep_wvENResponses = wvENResponses.map(prepare_dataset, remove_columns=['audio'])
-    return k_fold(prep_wvENResponses)
+    wvENResponses = process_wv_responses(human_responses)
+    prep_wvENResponses = audio_to_input_values(wvENResponses)
+    return unannotate_dataset(k_fold(prep_wvENResponses))
 
 def prepare_wvFRResponses10Fold():
     """Prepares French World Vowels stimuli with individual responses (from French-speaking participants) as classifications."""
@@ -302,21 +341,9 @@ def prepare_wvFRResponses10Fold():
     human_responses = pd.read_csv('../human_vowel_responses.csv')
     human_responses = human_responses[(human_responses['language_indiv'] == 'french') * (human_responses['language_stimuli'] == 'FR')]
 
-    wvFRResponses = Dataset.from_dict({
-        'audio': [f'../stimuli_world_vowels/{file}.wav' for file in human_responses['filename']],
-        'label': human_responses['assimilation'],
-        'vowel': human_responses['#phone'],
-    }).cast_column('audio', datasets.Audio()).class_encode_column('label').class_encode_column('vowel').shuffle()
-    
-    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
-
-    def prepare_dataset(batch):
-        audio = batch['audio']
-        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
-        return batch
-
-    prep_wvFRResponses = wvFRResponses.map(prepare_dataset, remove_columns=['audio'])
-    return k_fold(prep_wvFRResponses)
+    wvFRResponses = process_wv_responses(human_responses)
+    prep_wvFRResponses = audio_to_input_values(wvFRResponses)
+    return unannotate_dataset(k_fold(prep_wvFRResponses))
 
 def prepare_wvEN():
     """Prepares World Vowels English stimuli."""
@@ -327,17 +354,8 @@ def prepare_wvEN():
     wvEN = Dataset.from_dict({'audio': files, 'labels': phone}, split=datasets.Split.TRAIN)\
         .cast_column('audio', datasets.Audio())\
         .class_encode_column('labels')
-    #wvEN = wvEN.train_test_split(seed=2025, stratify_by_column='labels')
-
-    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
-
-    def prepare_dataset(batch):
-        audio = batch['audio']
-        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
-        return batch
-
-    prep_wvEN = wvEN.map(prepare_dataset, remove_columns=['audio'])
-    return prep_wvEN
+    prep_wvEN = audio_to_input_values(wvEN)
+    return unannotate_dataset(prep_wvEN)
 
 def prepare_wvEN10Fold():
     "Prepares WV English stimuli with vowel labels for 10-fold cross validation."
@@ -345,20 +363,9 @@ def prepare_wvEN10Fold():
     human_responses = pd.read_csv('../human_vowel_responses.csv')
     human_responses = human_responses[(human_responses['language_indiv'] == 'english') * (human_responses['language_stimuli'] == 'EN')]
 
-    wvEN = Dataset.from_dict({
-        'audio': [f'../stimuli_world_vowels/{file}.wav' for file in human_responses['filename']],
-        'label': human_responses['#phone'],
-    }).cast_column('audio', datasets.Audio()).class_encode_column('label').shuffle()
-
-    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
-
-    def prepare_dataset(batch):
-        audio = batch['audio']
-        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
-        return batch
-
-    prep_wvEN = wvEN.map(prepare_dataset, remove_columns=['audio'])
-    return k_fold(prep_wvEN)
+    wvEN = process_wv_responses(human_responses)
+    prep_wvEN = audio_to_input_values(wvEN)
+    return unannotate_dataset(k_fold(prep_wvEN))
 
 def prepare_wvFR10Fold():
     "Prepares WV French stimuli with vowel labels for 10-fold cross validation."
@@ -366,20 +373,9 @@ def prepare_wvFR10Fold():
     human_responses = pd.read_csv('../human_vowel_responses.csv')
     human_responses = human_responses[(human_responses['language_indiv'] == 'french') * (human_responses['language_stimuli'] == 'FR')]
 
-    wvFR = Dataset.from_dict({
-        'audio': [f'../stimuli_world_vowels/{file}.wav' for file in human_responses['filename']],
-        'label': human_responses['#phone'],
-    }).cast_column('audio', datasets.Audio()).class_encode_column('label').shuffle()
-
-    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
-
-    def prepare_dataset(batch):
-        audio = batch['audio']
-        batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
-        return batch
-
-    prep_wvFR = wvFR.map(prepare_dataset, remove_columns=['audio'])
-    return k_fold(prep_wvFR)
+    wvFR = process_wv_responses(human_responses)
+    prep_wvFR = audio_to_input_values(wvFR)
+    return unannotate_dataset(k_fold(prep_wvFR))
 
 def prepare_timit_ctc(aligned = False):
     """Prepares TIMIT for CTC sequence classification."""
@@ -507,18 +503,6 @@ def prepare_targets():
     prepared_targets = prepared_targets.class_encode_column('label')
 
     return prepared_targets
-
-def k_fold(prepared_dataset: Dataset, k=10):
-    """Splits a prepared dataset into 10 folds."""
-
-    splits = prepared_dataset.train_test_split(test_size=1/k, stratify_by_column='label')
-    prepared_dataset_folds = [splits['test']]
-    for i in reversed(range(2, k)):
-        splits = splits['train'].train_test_split(test_size=1/i, stratify_by_column='label')
-        prepared_dataset_folds.append(splits['test'])
-    prepared_dataset_folds.append(splits['train'])
-
-    return DatasetDict({f'fold_{i}': prepared_dataset_folds[i] for i in range(k)})
 
 
 def prepare_masked_targets():
@@ -723,9 +707,16 @@ def _get_vocab_dict(dataset: Dataset | DatasetDict | IterableDataset | IterableD
     vocab_dict = {v: k for k, v in enumerate(vocab_list)}
     return vocab_dict
 
-def audio_to_input_values(dataset: Dataset, feature_extractor) -> Dataset:
+@overload
+def audio_to_input_values(dataset: Dataset, feature_extractor = None) -> Dataset: ...
+@overload
+def audio_to_input_values(dataset: DatasetDict, feature_extractor = None) -> DatasetDict: ...
+def audio_to_input_values(dataset: Dataset | DatasetDict, feature_extractor = None) -> Dataset | DatasetDict:
     """Removes 'audio' column and adds an 'input_values' column using feature_extractor."""
 
+    if not feature_extractor:
+        feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+    
     def _generate_input_values(batch):
         audio = batch['audio']
         batch['input_values'] = feature_extractor(audio['array'], sampling_rate=audio['sampling_rate'])['input_values'][0]
