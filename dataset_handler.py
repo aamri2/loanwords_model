@@ -11,7 +11,7 @@ import phonemizer
 from pyacoustics.speech_filters import speech_shaped_noise
 import numpy as np
 from torchaudio.functional import forced_align, merge_tokens
-from sklearn.model_selection import StratifiedGroupKFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 from tqdm import tqdm
 
 _DATASET_PATH = '../'
@@ -272,39 +272,50 @@ def unannotate_dataset(dataset: Dataset | DatasetDict) -> Dataset | DatasetDict:
     prepared_dataset = dataset.remove_columns(list(columns_to_remove))
     return prepared_dataset
 
-def k_fold(annotated_dataset: Dataset, k=10) -> DatasetDict:
+def k_fold(annotated_dataset: Dataset, k=10, stratify_by_column='vowel', split_by_column: str|None='file', distribute_CVCs=True) -> DatasetDict:
     """Splits an annotated dataset into 10 folds."""
 
-    sgkf = StratifiedGroupKFold(n_splits=k, shuffle=True)
-    folds = [ # indices for each held-out fold
-        annotated_dataset.select(i[1])
-        for i in sgkf.split(
-            X = np.arange(len(annotated_dataset)),
-            y = annotated_dataset['vowel'],
-            groups = annotated_dataset['file'],
-        )
-    ]
+    if split_by_column:
+        sgkf = StratifiedGroupKFold(n_splits=k, shuffle=True)
+        folds = [ # indices for each held-out fold
+            annotated_dataset.select(i[1])
+            for i in sgkf.split(
+                X = np.arange(len(annotated_dataset)),
+                y = annotated_dataset[stratify_by_column],
+                groups = annotated_dataset[split_by_column] if split_by_column else None,
+            )
+        ]
+    else:
+        skf = StratifiedKFold(n_splits=k, shuffle=True)
+        folds = [ # indices for each held-out fold
+            annotated_dataset.select(i[1])
+            for i in skf.split(
+                X = np.arange(len(annotated_dataset)),
+                y = annotated_dataset[stratify_by_column],
+            )
+        ]
 
-    # ensure CVCs are distributed
-    files_to_move: dict[int, list[int]] = {i: list() for i in range(k)}
-    for i, fold in enumerate(folds):
-        other_folds_cvcs = set(cvc for j in range(k) if j != i for cvc in folds[j]['CVC'])
-        for cvc in set(fold['CVC']):
-            if cvc not in other_folds_cvcs:
-                if len(fold.filter(lambda row: row['CVC'] == cvc).unique('file')) > 1: # more than one file
-                    moving_candidates = fold.filter(lambda row: row['CVC'] == cvc).unique('file')
-                    file_to_move = moving_candidates[np.random.randint(len(moving_candidates))]
-                    files_to_move[i].append(file_to_move)
-    
-    for i, files in tqdm(files_to_move.items(), "Moving files"):
-        for file in files:
-            file_rows = folds[i].filter(lambda row: row['file'] == file)
-            vowel = file_rows['vowel'][0]
-            vowel_counts = {j: len(folds[j].filter(lambda row: row['vowel'] == vowel)) for j in range(k) if j != i}
-            receiving_candidates = [k for k, v in vowel_counts.items() if v == min(vowel_counts.values())] # move to fold containing fewest examples of vowel
-            fold_to_receive = receiving_candidates[np.random.default_rng().integers(len(receiving_candidates))]
-            folds[fold_to_receive] = datasets.concatenate_datasets([folds[fold_to_receive], file_rows])
-            folds[i] = folds[i].filter(lambda row: row['file'] != file)
+    if distribute_CVCs:
+        # ensure CVCs are distributed
+        files_to_move: dict[int, list[int]] = {i: list() for i in range(k)}
+        for i, fold in enumerate(folds):
+            other_folds_cvcs = set(cvc for j in range(k) if j != i for cvc in folds[j]['CVC'])
+            for cvc in set(fold['CVC']):
+                if cvc not in other_folds_cvcs:
+                    if len(fold.filter(lambda row: row['CVC'] == cvc).unique('file')) > 1: # more than one file
+                        moving_candidates = fold.filter(lambda row: row['CVC'] == cvc).unique('file')
+                        file_to_move = moving_candidates[np.random.randint(len(moving_candidates))]
+                        files_to_move[i].append(file_to_move)
+        
+        for i, files in tqdm(files_to_move.items(), "Moving files"):
+            for file in files:
+                file_rows = folds[i].filter(lambda row: row['file'] == file)
+                vowel = file_rows['vowel'][0]
+                vowel_counts = {j: len(folds[j].filter(lambda row: row['vowel'] == vowel)) for j in range(k) if j != i}
+                receiving_candidates = [k for k, v in vowel_counts.items() if v == min(vowel_counts.values())] # move to fold containing fewest examples of vowel
+                fold_to_receive = receiving_candidates[np.random.default_rng().integers(len(receiving_candidates))]
+                folds[fold_to_receive] = datasets.concatenate_datasets([folds[fold_to_receive], file_rows])
+                folds[i] = folds[i].filter(lambda row: row['file'] != file)
 
     return DatasetDict({f'fold_{i}': folds[i] for i in range(k)})
 
@@ -369,18 +380,25 @@ def prepare_wvEN10Fold():
     
     human_responses = pd.read_csv('../human_vowel_responses.csv')
     human_responses = human_responses[(human_responses['language_indiv'] == 'english') * (human_responses['language_stimuli'] == 'EN')]
+    human_responses = human_responses.groupby('filename').first().reset_index() # one row per file
 
     wvEN = process_wv_responses(human_responses)
+    wvEN = wvEN.remove_columns('label').rename_column('vowel', 'label')
     prep_wvEN = audio_to_input_values(wvEN)
-    return unannotate_dataset(k_fold(prep_wvEN))
+    prep_wvEN10Fold = k_fold(prep_wvEN)
+    prep_wvEN10Fold.remove_columns('label')
+    prep_wvEN10Fold.rename_column('vowel', 'label')
+    return unannotate_dataset(prep_wvEN10Fold)
 
 def prepare_wvFR10Fold():
     "Prepares WV French stimuli with vowel labels for 10-fold cross validation."
     
     human_responses = pd.read_csv('../human_vowel_responses.csv')
     human_responses = human_responses[(human_responses['language_indiv'] == 'french') * (human_responses['language_stimuli'] == 'FR')]
+    human_responses = human_responses.groupby('filename').first().reset_index() # one row per file
 
     wvFR = process_wv_responses(human_responses)
+    wvFR = wvFR.remove_columns('label').rename_column('vowel', 'label')
     prep_wvFR = audio_to_input_values(wvFR)
     return unannotate_dataset(k_fold(prep_wvFR))
 
@@ -455,8 +473,59 @@ def prepare_bl_ctc(aligned = False) -> tuple[datasets.DatasetDict, dict[str, int
     bl = bl.map(prepare_dataset, remove_columns=['phone', 'audio'])
     return bl, vocab_dict
 
+def prepare_blEV10Fold():
+    """Extracts BL syllables into a prepared dataset."""
+
+    bl = cast(DatasetDict, datasets.load_dataset('../BL-Database/dataset'))
+    bl = bl['train'] # only one split
+    with open('human_bl_vowels.json', encoding='utf-8') as f:
+        human_bl_vowels: dict[str, str] = json.load(f)
+    bl_human_vowels = {v: k for k, v in human_bl_vowels.items()}
+
+    def find_targets(batch):
+        utterance: list[str] = batch['phonetic_transcription']['phone']
+        # positions and labels of all C+VC+ sequences
+        vowel_indices = [i for i, phone in enumerate(utterance) if phone in bl_human_vowels.keys()]
+        syllable_start = [None for i in vowel_indices]
+        syllable_end = [None for i in vowel_indices]
+        syllable_vowel = [bl_human_vowels[utterance[i]] for i in vowel_indices]
+        for i, vowel_index in enumerate(vowel_indices):
+            preceding_vowel_index = max(vowel_indices[:i] + [0])
+            syllable_start[i] = batch['phonetic_transcription']['start'][preceding_vowel_index + 1]
+            following_vowel_index = min(vowel_indices[i:] + [len(utterance)])
+            syllable_end[i] = batch['phonetic_transcription']['stop'][following_vowel_index - 1]
+        batch['syllable_start'] = syllable_start
+        batch['syllable_end'] = syllable_end
+        batch['syllable_vowel'] = syllable_vowel
+        return batch
+    bl = bl.map(find_targets)
+
+    def extract_targets(dataset: Dataset):
+        for row in dataset.to_iterable_dataset():
+            sampling_rate = row['audio']['sampling_rate']
+            for syllable_start, syllable_end, syllable_vowel in zip(row['syllable_start'], row['syllable_end'], row['syllable_vowel']):
+                yield {
+                    'audio': {
+                        'array': row['audio']['array'][round(syllable_start * sampling_rate):round(syllable_end * sampling_rate)], # stop and start are in seconds
+                        'sampling_rate': sampling_rate,
+                    },
+                    'label': syllable_vowel,
+                }
+            
+    blEV = cast(Dataset, Dataset.from_generator(
+        extract_targets,
+        features=datasets.Features({
+            'audio': datasets.Audio(sampling_rate=16000, decode=True),
+            'label': datasets.Value('string'),
+        }),
+        gen_kwargs = {'dataset': bl},
+    )).class_encode_column('label')
+    prep_blEV = audio_to_input_values(blEV)
+    return unannotate_dataset(k_fold(prep_blEV, stratify_by_column='label', split_by_column=None, distribute_CVCs=False))
+
 def prepare_targets():
     """Extracts TIMIT syllables into a dataset, which is prepared for training."""
+    
     timit = cast(DatasetDict, datasets.load_dataset('timit_asr', data_dir='../timit/TIMIT'))
     timit = timit.remove_columns(['file', 'word_detail', 'dialect_region', 'sentence_type', 'speaker_id', 'id'])
 
@@ -497,9 +566,11 @@ def prepare_targets():
     targets_test = Dataset.from_generator(generator, gen_kwargs = {'batch': timit['test']}, split = datasets.Split.TEST)
     targets_train = Dataset.from_generator(generator, gen_kwargs = {'batch': timit['train']}, split = datasets.Split.TRAIN)
     targets = datasets.DatasetDict({'test': targets_test, 'train': targets_train})
+    targets.rename_column('target_utterance', 'label')
     targets.save_to_disk('../timit_targets')
 
     feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+
 
     def prepare_dataset(batch):
         batch['input_values'] = feature_extractor(batch['audio_array'], sampling_rate=batch['audio_sampling_rate']).input_values[0]
