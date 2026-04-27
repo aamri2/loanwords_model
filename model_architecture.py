@@ -977,7 +977,7 @@ class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
             if self.config.problem_type is None:
                 if self.config.ctc_head and not self.config.classifier_head:
                     self.config.problem_type = 'ctc'
-                if self.config.num_labels == 1:
+                elif self.config.num_labels == 1:
                     self.config.problem_type = "regression"
                 elif self.config.num_labels > 1 and labels.dtype in (torch.long, torch.int):
                     self.config.problem_type = "single_label_classification"
@@ -1170,7 +1170,7 @@ class MFCCLoanwordsModel(PreTrainedModel):
             if self.config.problem_type is None:
                 if self.config.ctc_head and not self.config.classifier_head:
                     self.config.problem_type = 'ctc'
-                if self.config.num_labels == 1:
+                elif self.config.num_labels == 1:
                     self.config.problem_type = "regression"
                 elif self.config.num_labels > 1 and labels.dtype in (torch.long, torch.int):
                     self.config.problem_type = "single_label_classification"

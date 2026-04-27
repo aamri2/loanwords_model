@@ -57,9 +57,13 @@ for model_config in model_configs.keys():
         try:
             model = Wav2Vec2LoanwordsModel.from_pretrained(
                 **model_configs[model_config],
-                id2label = {v: k for k, v in dataset_vocabs[model].items()},
+                id2label = {v: k for k, v in dataset_vocabs[model_dataset].items()},
                 label2id = dataset_vocabs[model_dataset],
                 ctc_head = True,
+                ctc_loss_reduction='mean',
+                pad_token_id=dataset_processors[model_dataset].tokenizer.pad_token_id,
+                vocab_size = len(dataset_vocabs[model_dataset]),
+                mask_time_prob=0,
             )
             if '2' in model_config:
                 model.freeze_base_model()
@@ -68,7 +72,7 @@ for model_config in model_configs.keys():
             
             def compute_metrics(pred):
                 pred_logits = pred.predictions[0] if isinstance(pred.predictions, tuple) else pred.predictions
-                pred_ids = numpy.argmax(pred_logits, axis=-1)
+                pred_ids = pred_logits
                 pred.label_ids[pred.label_ids == -100] = dataset_processors[model_dataset].tokenizer.pad_token_id
 
                 pred_str = dataset_processors[model_dataset].batch_decode(pred_ids)
@@ -95,7 +99,8 @@ for model_config in model_configs.keys():
                 push_to_hub=False,
                 output_dir=os.path.expanduser(f'~/scratch/trainer_output_{model_config}_{model_dataset}'),
                 load_best_model_at_end=True,
-                metric_for_best_model='eval_loss'
+                metric_for_best_model='eval_loss',
+                eval_accumulation_steps=20,
             )
 
             trainer = Trainer(
@@ -105,7 +110,8 @@ for model_config in model_configs.keys():
                 train_dataset=train_dataset,
                 eval_dataset=test_dataset,
                 processing_class=dataset_processors[model_dataset],
-                data_collator=DataCollatorCTCWithPadding(dataset_processors[model_dataset])
+                data_collator=DataCollatorCTCWithPadding(dataset_processors[model_dataset]),
+                preprocess_logits_for_metrics=lambda logits, labels: numpy.argmax(logits[0].cpu(), axis=-1),
             )
 
             trainer.train()

@@ -15,7 +15,7 @@ accuracy_metric = evaluate.load('../metrics/accuracy')
 
 def compute_metrics(pred):
     pred_logits = pred.predictions[0] if isinstance(pred.predictions, tuple) else pred.predictions
-    pred_ids = numpy.argmax(pred_logits, axis=-1)
+    pred_ids = pred_logits
 
     accuracy = accuracy_metric.compute(predictions=pred_ids, references=pred.label_ids)
     return {'accuracy': accuracy}
@@ -43,6 +43,15 @@ model_datasets_by_config = {
     },
 }
 
+dataset_num_epochs = {
+    'wvENResponses10Fold': 300,
+    'wvFRResponses10Fold': 300,
+    'wvEN10Fold': 1000,
+    'wvFR10Fold': 1000,
+    'timitEV10Fold': 30,
+    'blEV10Fold': 60,
+}
+
 for model_config in model_configs.keys():
     for model_dataset in model_datasets_by_config[model_config].keys():
         for k in range(10):
@@ -56,6 +65,7 @@ for model_config in model_configs.keys():
                     max_pooling_windows=7,
                     classifier_head=True,
                     classifier_hidden=True,
+                    mask_time_prob=0,
                 )
                 if isinstance(model, Wav2Vec2LoanwordsModel):
                     model.freeze_base_model()
@@ -66,7 +76,7 @@ for model_config in model_configs.keys():
                     group_by_length=True,
                     per_device_train_batch_size=32,
                     eval_strategy='steps',
-                    num_train_epochs=300,
+                    num_train_epochs=dataset_num_epochs[model_dataset],
                     bf16=True,
                     save_steps=0.1,
                     eval_steps=0.1,
@@ -78,7 +88,8 @@ for model_config in model_configs.keys():
                     push_to_hub=False,
                     output_dir=os.path.expanduser(f'~/scratch/trainer_output_{model_config}_{model_dataset}_cross_{k}'),
                     load_best_model_at_end=True,
-                    metric_for_best_model='eval_loss'
+                    metric_for_best_model='eval_loss',
+                    eval_accumulation_steps=20,
                 )
 
                 trainer = Trainer(
@@ -88,7 +99,8 @@ for model_config in model_configs.keys():
                     train_dataset=train_dataset,
                     eval_dataset=test_dataset,
                     processing_class=feature_extractor, # type: ignore # feature_extractor exists
-                    data_collator=DataCollatorWithPaddingForClassification(feature_extractor)
+                    data_collator=DataCollatorWithPaddingForClassification(feature_extractor),
+                    preprocess_logits_for_metrics=lambda logits, labels: numpy.argmax(logits[0].cpu(), axis=-1),
                 )
 
                 trainer.train()
