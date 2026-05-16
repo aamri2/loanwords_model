@@ -790,6 +790,8 @@ class LoanwordsConfig(PretrainedConfig):
             The dimensionality of the hidden classifier layer. Only used when
             `classifier_head` is True. When unspecified, the hidden classifier layer
             has dimensionality floored mean of the output size and `num_labels`.
+        classifier_hidden_activation_function (`str`, *optional*, defaults to None):
+            An activation function to use in the hidden classifier layer.
     """
 
     def __init__(
@@ -806,6 +808,7 @@ class LoanwordsConfig(PretrainedConfig):
         classifier_head: bool = False,
         classifier_hidden: bool = False,
         classifier_hidden_size: int | None = None,
+        classifier_hidden_activation_function: str | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -828,10 +831,25 @@ class LoanwordsConfig(PretrainedConfig):
         self.classifier_head = classifier_head
         self.classifier_hidden = classifier_hidden
         self.classifier_hidden_size = classifier_hidden_size
+        self.classifier_hidden_activation_function = classifier_hidden_activation_function
+        if self.classifier_hidden_activation_function and not self.classifier_hidden_activation_function in ['relu']:
+            raise ValueError(f"Unrecognized preclassifier activation function: {self.classifier_hidden_activation_function}.")        
 
 class Wav2Vec2LoanwordsConfig(Wav2Vec2Config, LoanwordsConfig):
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        Wav2Vec2Config.__init__(self, **kwargs)
+        LoanwordsConfig.__init__(self, **kwargs)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, return_unused_kwargs = False, **kwargs):
+        config, unused_kwargs = super().from_pretrained(pretrained_model_name_or_path, *args, return_unused_kwargs = True, **kwargs)
+        return_kwargs = {}
+        for kwarg in unused_kwargs.keys():
+            if kwarg in LoanwordsConfig():
+                setattr(config, kwarg, unused_kwargs[kwarg])
+            else:
+                return_kwargs[kwarg] = unused_kwargs[kwarg]
+        return config if not return_unused_kwargs else (config, return_kwargs)
 
 class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
     """
@@ -880,7 +898,7 @@ class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
                     if config.preclassifier_activation_function == 'relu':
                         max_pooling_layers.append(nn.ReLU())
                     else:
-                        raise ValueError(f"Unknown preclassifier activation function: {config.preclassifier_activation_function}")
+                        raise ValueError(f"Unknown preclassifier activation function: {config.preclassifier_activation_function}.")
                 self.max_pooling = nn.Sequential(*max_pooling_layers)
             elif config.temporal_pooling == 'attn':
                 if config.ctc_head and config.append_hidden_outputs:
@@ -895,10 +913,21 @@ class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
             else:
                 if not config.classifier_hidden_size:
                     config.classifier_hidden_size = (output_size + config.num_labels) // 2
-                self.classifier = nn.Sequential(
-                    nn.Linear(output_size, config.classifier_hidden_size),
-                    nn.Linear(config.classifier_hidden_size, config.num_labels)
-                )
+                if config.classifier_hidden_activation_function:
+                    if config.classifier_hidden_activation_function == 'relu':
+                        activation_function = nn.ReLU()
+                    else:
+                        raise ValueError(f"Unknown classifier hidden activation function: {config.classifier_hidden_activation_function}.")
+                    self.classifier = nn.Sequential(
+                        nn.Linear(output_size, config.classifier_hidden_size),
+                        activation_function,
+                        nn.Linear(config.classifier_hidden_size, config.num_labels),
+                    )
+                else:
+                    self.classifier = nn.Sequential(
+                        nn.Linear(output_size, config.classifier_hidden_size),
+                        nn.Linear(config.classifier_hidden_size, config.num_labels),
+                    )
         self.config = config
         self.post_init()
 
@@ -1025,6 +1054,21 @@ class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
         return CausalLMOutput(
             loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions # type: ignore # can't tell tensor dtype
         )
+
+    def _init_weights(self, module):
+        super()._init_weights(module)
+
+        # use Kaiming (He) initialization when using ReLU
+        if (
+            isinstance(module, nn.Linear)
+            and self.config.classifier_head
+            and self.config.classifier_hidden
+            and self.config.classifier_hidden_activation_function == 'relu'
+            and module in set(self.classifier.modules())
+        ):
+            nn.init.kaiming_normal_(module.weight, nonlinearity='relu')
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
     
     def freeze_feature_encoder(self):
         self.wav2vec2.feature_extractor._freeze_parameters()
@@ -1109,12 +1153,38 @@ class MFCCLoanwordsModel(PreTrainedModel):
             else:
                 if not config.classifier_hidden_size:
                     config.classifier_hidden_size = (output_size + config.num_labels) // 2
-                self.classifier = nn.Sequential(
-                    nn.Linear(output_size, config.classifier_hidden_size),
-                    nn.Linear(config.classifier_hidden_size, config.num_labels)
-                )
+                if config.classifier_hidden_activation_function:
+                    if config.classifier_hidden_activation_function == 'relu':
+                        activation_function = nn.ReLU()
+                    else:
+                        raise ValueError(f"Unknown classifier hidden activation function: {config.classifier_hidden_activation_function}.")
+                    self.classifier = nn.Sequential(
+                        nn.Linear(output_size, config.classifier_hidden_size),
+                        activation_function,
+                        nn.Linear(config.classifier_hidden_size, config.num_labels),
+                    )
+                else:
+                    self.classifier = nn.Sequential(
+                        nn.Linear(output_size, config.classifier_hidden_size),
+                        nn.Linear(config.classifier_hidden_size, config.num_labels),
+                    )
         self.config = config
         self.post_init()
+
+    def _init_weights(self, module):
+        super()._init_weights(module)
+        
+        # use Kaiming (He) initialization when using ReLU
+        if (
+            isinstance(module, nn.Linear)
+            and self.config.classifier_head
+            and self.config.classifier_hidden
+            and self.config.classifier_hidden_activation_function == 'relu'
+            and module in [m for m in self.classifier.modules() if isinstance(m, nn.Linear)][:-1] # non-final classifier linear layers has ReLU activation
+        ):
+            nn.init.kaiming_normal_(module.weight, nonlinearity='relu')
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
 
     def forward(
         self,
