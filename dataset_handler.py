@@ -1,3 +1,4 @@
+import torch
 from spec import TrainingDatasetSpec, _SEPARATOR
 from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict, load_from_disk
 import datasets
@@ -5,7 +6,6 @@ import json
 import pandas as pd
 from typing import Sequence, overload, cast
 import phonemizer.separator
-import torch
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2PhonemeCTCTokenizer
 import phonemizer
 from pyacoustics.speech_filters import speech_shaped_noise
@@ -333,6 +333,26 @@ def prepare_wvResponses():
     prep_wvResponses = audio_to_input_values(wvResponses)
     return unannotate_dataset(prep_wvResponses)
 
+def prepare_wvENNonnativeResponses10Fold():
+    """WV responses by English speakers on all stimuli."""
+
+    human_responses = pd.read_csv('../human_vowel_responses.csv')
+    human_responses = human_responses[(human_responses['language_indiv'] == 'english') & (human_responses['language_stimuli'] != 'EN')]
+    wvResponses = process_wv_responses(human_responses)
+
+    wvResponses = wvResponses.map(lambda batch: {'vowel_language': f"{batch['vowel']}_{batch['language']}"})
+    return k_fold(wvResponses, stratify_by_column='vowel_language')
+
+def prepare_wvFRNonnativeResponses10Fold():
+    """WV responses by French speakers on all stimuli."""
+
+    human_responses = pd.read_csv('../human_vowel_responses.csv')
+    human_responses = human_responses[(human_responses['language_indiv'] == 'french') & (human_responses['language_stimuli'] != 'FR')]
+
+    wvResponses = process_wv_responses(human_responses)
+    wvResponses = wvResponses.map(lambda batch: {'vowel_language': f"{batch['vowel']}_{batch['language']}"})
+    return k_fold(wvResponses, stratify_by_column='vowel_language')
+
 def prepare_wvENResponses():
     """Prepares World Vowels stimuli with individual responses as classifications."""
     
@@ -385,9 +405,7 @@ def prepare_wvEN10Fold():
     wvEN = process_wv_responses(human_responses)
     wvEN = wvEN.remove_columns('label').rename_column('vowel', 'label')
     prep_wvEN = audio_to_input_values(wvEN)
-    prep_wvEN10Fold = k_fold(prep_wvEN)
-    prep_wvEN10Fold.remove_columns('label')
-    prep_wvEN10Fold.rename_column('vowel', 'label')
+    prep_wvEN10Fold = k_fold(prep_wvEN, stratify_by_column='label')
     return unannotate_dataset(prep_wvEN10Fold)
 
 def prepare_wvFR10Fold():
@@ -400,7 +418,8 @@ def prepare_wvFR10Fold():
     wvFR = process_wv_responses(human_responses)
     wvFR = wvFR.remove_columns('label').rename_column('vowel', 'label')
     prep_wvFR = audio_to_input_values(wvFR)
-    return unannotate_dataset(k_fold(prep_wvFR))
+    prep_wvFR10Fold = k_fold(prep_wvFR, stratify_by_column='label')
+    return unannotate_dataset(prep_wvFR10Fold)
 
 def prepare_timit_ctc(aligned = False):
     """Prepares TIMIT for CTC sequence classification."""
@@ -486,34 +505,34 @@ def prepare_blEV10Fold():
         utterance: list[str] = batch['phonetic_transcription']['phone']
         # positions and labels of all C+VC+ sequences
         vowel_indices = [i for i, phone in enumerate(utterance) if phone in bl_human_vowels.keys()]
-        syllable_start = [None for i in vowel_indices]
-        syllable_end = [None for i in vowel_indices]
+        syllable_start: list[int | None] = [None for i in vowel_indices]
+        syllable_end: list[int | None] = [None for i in vowel_indices]
         syllable_vowel = [bl_human_vowels[utterance[i]] for i in vowel_indices]
         for i, vowel_index in enumerate(vowel_indices):
-            preceding_vowel_index = max(vowel_indices[:i] + [0])
-            syllable_start[i] = batch['phonetic_transcription']['start'][preceding_vowel_index + 1]
-            following_vowel_index = min(vowel_indices[i:] + [len(utterance)])
-            syllable_end[i] = batch['phonetic_transcription']['stop'][following_vowel_index - 1]
+            preceding_vowel_index = next(reversed(vowel_indices[:i]), 0)
+            syllable_start[i] = round(batch['phonetic_transcription']['start'][preceding_vowel_index] * batch['audio']['sampling_rate'])
+            following_vowel_index = next(iter(vowel_indices[i + 1:-1]), None)
+            syllable_end[i] = round(batch['phonetic_transcription']['stop'][following_vowel_index] * batch['audio']['sampling_rate']) if following_vowel_index else None
         batch['syllable_start'] = syllable_start
         batch['syllable_end'] = syllable_end
         batch['syllable_vowel'] = syllable_vowel
         return batch
     bl = bl.map(find_targets)
 
-    def extract_targets(dataset: Dataset):
+    def extract_syllables(dataset: Dataset):
         for row in dataset.to_iterable_dataset():
             sampling_rate = row['audio']['sampling_rate']
             for syllable_start, syllable_end, syllable_vowel in zip(row['syllable_start'], row['syllable_end'], row['syllable_vowel']):
                 yield {
                     'audio': {
-                        'array': row['audio']['array'][round(syllable_start * sampling_rate):round(syllable_end * sampling_rate)], # stop and start are in seconds
+                        'array': row['audio']['array'][syllable_start:syllable_end],
                         'sampling_rate': sampling_rate,
                     },
                     'label': syllable_vowel,
                 }
             
     blEV = cast(Dataset, Dataset.from_generator(
-        extract_targets,
+        extract_syllables,
         features=datasets.Features({
             'audio': datasets.Audio(sampling_rate=16000, decode=True),
             'label': datasets.Value('string'),
@@ -523,7 +542,7 @@ def prepare_blEV10Fold():
     prep_blEV = audio_to_input_values(blEV)
     return unannotate_dataset(k_fold(prep_blEV, stratify_by_column='label', split_by_column=None, distribute_CVCs=False))
 
-def prepare_targets():
+def prepare_timitEV():
     """Extracts TIMIT syllables into a dataset, which is prepared for training."""
     
     timit = cast(DatasetDict, datasets.load_dataset('timit_asr', data_dir='../timit/TIMIT'))
@@ -534,53 +553,65 @@ def prepare_targets():
     target_labels = {'iy': 'i', 'ih': 'ɪ', 'ey': 'eɪ', 'eh': 'ɛ', 'ae': 'æ', 'aa': 'ɑ', 'ah': 'ʌ', 'ow': 'oʊ', 'uw': 'u', 'uh': 'ʊ'} # desired label: timit label
 
     def find_targets(batch):
+        audio_length = batch['phonetic_detail']['stop'][-1]
         # fold phones
         utterance = [timit_folding.get(phone, phone) for phone in cast(list[str], batch['phonetic_detail']['utterance'])]
         # positions and labels of all C+VC+ sequences (excluding non-target diphthongs)
-        target_indices = [i for i, phone in enumerate(utterance) if phone in target_labels.keys()]
+        target_vowel_indices = [i for i, phone in enumerate(utterance) if phone in target_labels.keys()]
         vowel_indices = [i for i, phone in enumerate(utterance) if phone in timit_vowels]
-        target_start = [None for i in target_indices]
-        target_end = [None for i in target_indices]
-        target_utterance = [target_labels[utterance[i]] for i in target_indices]
-        for i, target_index in enumerate(target_indices):
-            preceding_vowel_index = max(target_indices[:i] + [j for j in vowel_indices if j < target_index] + [0])
-            target_start[i] = batch['phonetic_detail']['start'][preceding_vowel_index + 1]
-            following_vowel_index = min([j for j in target_indices[i:] if j > target_index] + [j for j in vowel_indices if j > target_index] + [len(utterance)])
-            target_end[i] = batch['phonetic_detail']['stop'][following_vowel_index - 1]
-        batch['target_start'] = target_start
-        batch['target_end'] = target_end
-        batch['target_utterance'] = target_utterance    
+        syllable_start = [None for i in target_vowel_indices]
+        syllable_end = [None for i in target_vowel_indices]
+        syllable_vowel = [target_labels[utterance[i]] for i in target_vowel_indices]
+        for i, target_index in enumerate(target_vowel_indices):
+            preceding_vowel_index = max(target_vowel_indices[:i] + [j for j in vowel_indices if j < target_index] + [0])
+            syllable_start[i] = batch['phonetic_detail']['start'][preceding_vowel_index + 1]
+            following_vowel_index = min([j for j in target_vowel_indices[i:] if j > target_index] + [j for j in vowel_indices if j > target_index] + [len(utterance)])
+            syllable_end[i] = batch['phonetic_detail']['stop'][following_vowel_index - 1]
+            syllable_length = syllable_end[i] - syllable_start[i]
+            if syllable_length < 4000: # less than an eighth of a second, pad with more context
+                syllable_end[i] = min(syllable_end[i] + 2000 - syllable_length//2, audio_length) # centre around centre of target, unless hits edge of sentence
+                syllable_start[i] = max(syllable_end[i] - 4000, 0)
+                syllable_end[i] = syllable_start[i] + 4000 # in case it was near the start
+        batch['syllable_start'] = syllable_start
+        batch['syllable_end'] = syllable_end
+        batch['syllable_vowel'] = syllable_vowel
         return batch
-    timit = timit.map(find_targets)
+    timit = timit.map(find_targets) # breaks if we keep original audio feature
 
-    def generator(batch):
-        for row in range(len(batch)):
-            sampling_rate = batch[row]['audio']['sampling_rate']
-            for target_start, target_end, target_utterance in zip(batch[row]['target_start'], batch[row]['target_end'], batch[row]['target_utterance']):
+    def extract_syllables(dataset: Dataset):
+        for row in dataset.to_iterable_dataset():
+            sampling_rate = row['audio']['sampling_rate']
+            for syllable_start, syllable_end, syllable_vowel in zip(row['syllable_start'], row['syllable_end'], row['syllable_vowel']):
                 yield {
-                    'audio_array': batch[row]['audio']['array'][target_start:target_end],
-                    'audio_sampling_rate': sampling_rate,
-                    'target_utterance': target_utterance
+                    'audio': {
+                        'array': row['audio']['array'][syllable_start:syllable_end],
+                        'sampling_rate': sampling_rate,
+                    },
+                    'label': syllable_vowel
                 }
             
-    targets_test = Dataset.from_generator(generator, gen_kwargs = {'batch': timit['test']}, split = datasets.Split.TEST)
-    targets_train = Dataset.from_generator(generator, gen_kwargs = {'batch': timit['train']}, split = datasets.Split.TRAIN)
-    targets = datasets.DatasetDict({'test': targets_test, 'train': targets_train})
-    targets.rename_column('target_utterance', 'label')
-    targets.save_to_disk('../timit_targets')
+    timitEV_test = Dataset.from_generator(
+        extract_syllables,
+        features = datasets.Features({
+            'audio': datasets.Audio(sampling_rate=16000, decode=True),
+            'label': datasets.Value('string'),
+        }),
+        gen_kwargs = {'dataset': timit['test']},
+        split = datasets.Split.TEST,
+    )
+    timitEV_train = Dataset.from_generator(
+        extract_syllables,
+        features = datasets.Features({
+            'audio': datasets.Audio(sampling_rate=16000, decode=True),
+            'label': datasets.Value('string'),
+        }),
+        gen_kwargs = {'dataset': timit['train']},
+        split = datasets.Split.TRAIN,
+    )
+    timitEV = datasets.DatasetDict({'test': timitEV_test, 'train': timitEV_train}).class_encode_column('label')
+    prep_timitEV = audio_to_input_values(timitEV)
 
-    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
-
-
-    def prepare_dataset(batch):
-        batch['input_values'] = feature_extractor(batch['audio_array'], sampling_rate=batch['audio_sampling_rate']).input_values[0]
-        batch['label'] = batch['target_utterance']
-        return batch
-
-    prepared_targets = targets.map(prepare_dataset, remove_columns=targets.column_names['train'])
-    prepared_targets = prepared_targets.class_encode_column('label')
-
-    return prepared_targets
+    return unannotate_dataset(prep_timitEV)
 
 
 def prepare_masked_targets():
