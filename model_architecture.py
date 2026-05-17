@@ -683,7 +683,7 @@ class Wav2Vec2ForCTCWithTransformerL2(Wav2Vec2ForCTCWithTransformer):
             All labels set to `-100` are ignored (masked), the loss is only computed for labels in `[0, ...,
             config.vocab_size - 1]`.
         """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = return_dict if return_dict is not None else self.config.return_dict
         output_hidden_states = True if self.config.use_weighted_layer_sum else output_hidden_states # need hidden states for this
 
         if labels is not None and labels.max() >= self.config.vocab_size:
@@ -942,7 +942,7 @@ class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
         frame_mask: torch.Tensor | None = None,
         **kwargs,
     ) -> tuple | CausalLMOutput:
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = return_dict if return_dict is not None else self.config.return_dict
         output_hidden_states = True if self.config.use_weighted_layer_sum else output_hidden_states
         outputs = self.wav2vec2(
             input_values,
@@ -1196,7 +1196,7 @@ class MFCCLoanwordsModel(PreTrainedModel):
         frame_mask: torch.Tensor | None = None,
         **kwargs,
     ) -> tuple | CausalLMOutput:
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = return_dict if return_dict is not None else self.config.return_dict
         outputs = self.mfcc(input_values)
 
         hidden_states = outputs.transpose(1, 2)
