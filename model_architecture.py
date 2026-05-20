@@ -3,16 +3,19 @@
 import torch
 from torch import nn
 from transformers import Wav2Vec2PreTrainedModel, Wav2Vec2Model, Wav2Vec2ForCTC, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
+from transformers.trainer import Trainer
+from transformers.utils import SAFE_WEIGHTS_NAME
 from transformers.configuration_utils import PretrainedConfig
 from transformers.feature_extraction_utils import BatchFeature
 from transformers.modeling_outputs import CausalLMOutput
 from transformers.data.data_collator import DataCollatorWithPadding
 from transformers.modeling_utils import PreTrainedModel
 from transformers import Wav2Vec2Config
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Union, Any, cast
 from dataclasses import dataclass
 from torchaudio.transforms import MFCC
-import math
+import os
+import safetensors.torch
 
 # try max pooling on the logits (i.e. maximum per classification over time) and use that
 # to predict the individual participant responses (cf. logistic regression); stratify
@@ -1076,6 +1079,19 @@ class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
     def freeze_base_model(self):
         for param in self.wav2vec2.parameters():
             param.requires_grad = False
+    
+    @classmethod
+    def from_pretrained_head(cls, head_checkpoint: str, base_model: str, **kwargs):
+        model = cls.from_pretrained(base_model, **kwargs)
+        head_weights = safetensors.torch.load_file(os.path.join(head_checkpoint, SAFE_WEIGHTS_NAME))
+        missing, unexpected = model.load_state_dict(head_weights, strict=False)
+        if unexpected:
+            raise ValueError(f"Unexpected keys in head checkpoint: {unexpected}")
+        trainable_names = {n for n, p in model.named_parameters() if p.requires_grad}
+        unloaded = missing - trainable_names
+        if unloaded:
+            raise ValueError(f"Head checkpoint is missing expected trainable keys: {unloaded}")
+        return model
 
 class MFCCLoanwordsConfig(LoanwordsConfig):
     """
@@ -1288,7 +1304,17 @@ class MFCCLoanwordsModel(PreTrainedModel):
         return CausalLMOutput(
             loss=loss, logits=logits # type: ignore # can't tell tensor dtype
         )
-    
+
+class LoanwordsTrainer(Trainer):
+    """Only saves fine-tuned parameters in checkpoints."""
+
+    def save_model(self, output_dir: str | None = None, _internal_call: bool = False) -> None:
+        """Pass state_dict with only trainable parameters."""
+
+        model = cast(PreTrainedModel, self.model.module if hasattr(self.model, 'module') else self.model)
+        trainable_names = {name for name, param in cast(PreTrainedModel, model).named_parameters() if param.requires_grad}
+        trainable_state_dict = {k: v for k, v in cast(PreTrainedModel, model).state_dict().items() if k in trainable_names}
+        self._save(output_dir, state_dict=trainable_state_dict)
 
 @dataclass
 class DataCollatorCTCWithPadding: # from https://huggingface.co/blog/fine-tune-wav2vec2-english
