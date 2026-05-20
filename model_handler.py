@@ -5,10 +5,10 @@ with an accompanying vocabulary. Uses the Spec framework to
 manage the relevant specifications.
 """
 
+import torch
 from spec import ModelSpec, LayerSpec, _SEPARATOR
 from model_architecture import *
 import pandas
-import torch
 import json
 from transformers.modeling_utils import PreTrainedModel
 from datasets import Dataset
@@ -16,6 +16,7 @@ from typing import Any, Callable
 import matplotlib.pyplot as plt
 import collections
 from base_model_handler import Base
+from tqdm import tqdm
 
 _MODEL_PATH = '../models/'
 _MODEL_PREFIX = 'm'
@@ -187,7 +188,7 @@ def probabilities(model, dataset: Dataset, id2label = None, **kwargs):
     if not id2label:
         id2label = model.config.id2label if model.config.id2label else {}
 
-    for row in dataset.to_iterable_dataset():
+    for row in tqdm(dataset.to_iterable_dataset(), total=len(dataset), desc="Running model"):
         with torch.no_grad():
             input_values = torch.tensor(row['input_values']).unsqueeze(0)
             logits = model(input_values, **kwargs)['logits'].cpu().detach()[0]

@@ -11,7 +11,7 @@ import phonemizer
 from pyacoustics.speech_filters import speech_shaped_noise
 import numpy as np
 from torchaudio.functional import forced_align, merge_tokens
-from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, train_test_split
 from tqdm import tqdm
 
 _DATASET_PATH = '../'
@@ -275,49 +275,53 @@ def unannotate_dataset(dataset: Dataset | DatasetDict) -> Dataset | DatasetDict:
 def k_fold(annotated_dataset: Dataset, k=10, stratify_by_column='vowel', split_by_column: str|None='file', distribute_CVCs=True) -> DatasetDict:
     """Splits an annotated dataset into 10 folds."""
 
+    splits = {}
+
     if split_by_column:
         sgkf = StratifiedGroupKFold(n_splits=k, shuffle=True)
-        folds = [ # indices for each held-out fold
-            annotated_dataset.select(i[1])
-            for i in sgkf.split(
-                X = np.arange(len(annotated_dataset)),
-                y = annotated_dataset[stratify_by_column],
-                groups = annotated_dataset[split_by_column] if split_by_column else None,
-            )
-        ]
+        for i, (train_dev_split, test_split) in enumerate(sgkf.split(X = np.arange(len(annotated_dataset)), y = annotated_dataset[stratify_by_column], groups = annotated_dataset[split_by_column])):
+            splits[f'train_{i}'], splits[f'dev_{i}'] = (annotated_dataset.select(train_dev_split).select(split) for split in train_test_split(np.arange(len(train_dev_split)), stratify = annotated_dataset.select(train_dev_split)[stratify_by_column], test_size = 0.1))
+            splits[f'test_{i}'] = annotated_dataset.select(test_split)
     else:
         skf = StratifiedKFold(n_splits=k, shuffle=True)
-        folds = [ # indices for each held-out fold
-            annotated_dataset.select(i[1])
-            for i in skf.split(
-                X = np.arange(len(annotated_dataset)),
-                y = annotated_dataset[stratify_by_column],
-            )
-        ]
+        for i, (train_dev_split, test_split) in enumerate(skf.split(X = np.arange(len(annotated_dataset)), y = annotated_dataset[stratify_by_column])):
+            splits[f'train_{i}'], splits[f'dev_{i}'] = (annotated_dataset.select(train_dev_split).select(split) for split in train_test_split(np.arange(len(train_dev_split)), stratify = annotated_dataset.select(train_dev_split)[stratify_by_column], test_size = 0.1))
+            splits[f'test_{i}'] = annotated_dataset.select(test_split)
 
     if distribute_CVCs:
-        # ensure CVCs are distributed
-        files_to_move: dict[int, list[int]] = {i: list() for i in range(k)}
-        for i, fold in enumerate(folds):
-            other_folds_cvcs = set(cvc for j in range(k) if j != i for cvc in folds[j]['CVC'])
-            for cvc in set(fold['CVC']):
-                if cvc not in other_folds_cvcs:
-                    if len(fold.filter(lambda row: row['CVC'] == cvc).unique('file')) > 1: # more than one file
-                        moving_candidates = fold.filter(lambda row: row['CVC'] == cvc).unique('file')
-                        file_to_move = moving_candidates[np.random.randint(len(moving_candidates))]
-                        files_to_move[i].append(file_to_move)
-        
-        for i, files in tqdm(files_to_move.items(), "Moving files"):
-            for file in files:
-                file_rows = folds[i].filter(lambda row: row['file'] == file)
-                vowel = file_rows['vowel'][0]
-                vowel_counts = {j: len(folds[j].filter(lambda row: row['vowel'] == vowel)) for j in range(k) if j != i}
-                receiving_candidates = [k for k, v in vowel_counts.items() if v == min(vowel_counts.values())] # move to fold containing fewest examples of vowel
-                fold_to_receive = receiving_candidates[np.random.default_rng().integers(len(receiving_candidates))]
-                folds[fold_to_receive] = datasets.concatenate_datasets([folds[fold_to_receive], file_rows])
-                folds[i] = folds[i].filter(lambda row: row['file'] != file)
-
-    return DatasetDict({f'fold_{i}': folds[i] for i in range(k)})
+        # ensure CVCs in test set always appear in train set
+        folds_to_validate = k 
+        while folds_to_validate > 0:
+            folds_to_validate = k
+            for i in range(k):
+                missing_cvcs = set(splits[f'test_{i}']['CVC']).difference(splits[f'train_{i}']['CVC']) # in test set but not train
+                if len(set(splits[f'test_{i}'].filter(lambda row: row['CVC'] in missing_cvcs)['file'])) == len(missing_cvcs): # no missing CVCs, or only in one file each
+                    folds_to_validate -= 1 # empty pass through all folds means distributed
+                    continue
+                for cvc in missing_cvcs:
+                    stratified_column = splits[f'test_{i}'].filter(lambda row: row['CVC'] == cvc)[stratify_by_column][0] # same CVC means same vowel
+                    if cvc in splits[f'dev_{i}']['CVC']: # can just swap from dev set
+                        file_to_swap_train = splits[f'train_{i}'].filter(lambda row: # filtering swapping candidates
+                            row[stratify_by_column] == stratified_column
+                            and ( # either in another file in train, or not in test
+                                row['CVC'] in splits[f'train_{i}'].filter(lambda row_2: row_2['file'] != row['file'])['CVC']
+                                or row['CVC'] not in splits[f'test_{i}']['CVC']
+                            )
+                        ).shuffle()[0]['file']
+                        train_swap_dataset = splits[f'train_{i}'].filter(lambda row: row['file'] == file_to_swap_train)
+                        file_to_swap_dev = splits[f'dev_{i}'].filter(lambda row: row['CVC'] == cvc).shuffle()[0]['file']
+                        dev_swap_dataset = splits[f'dev_{i}'].filter(lambda row: row['file'] == file_to_swap_dev)
+                        # swap files
+                        splits[f'train_{i}'] = datasets.concatenate_datasets([
+                            splits[f'train_{i}'].filter(lambda row: row['file'] != file_to_swap_train),
+                            dev_swap_dataset
+                        ])
+                        splits[f'dev_{i}'] = datasets.concatenate_datasets([
+                            splits[f'dev_{i}'].filter(lambda row: row['file'] != file_to_swap_dev),
+                            train_swap_dataset
+                        ])
+    
+    return DatasetDict(splits)
 
 def prepare_wvResponses():
     """Prepares World Vowels stimuli with individual responses as classifications."""
@@ -492,14 +496,19 @@ def prepare_bl_ctc(aligned = False) -> tuple[datasets.DatasetDict, dict[str, int
     bl = bl.map(prepare_dataset, remove_columns=['phone', 'audio'])
     return bl, vocab_dict
 
-def prepare_blEV10Fold():
+def prepare_blEV():
     """Extracts BL syllables into a prepared dataset."""
 
     bl = cast(DatasetDict, datasets.load_dataset('../BL-Database/dataset'))
-    bl = bl['train'] # only one split
+    bl = bl['train'] # no existing splits
     with open('human_bl_vowels.json', encoding='utf-8') as f:
         human_bl_vowels: dict[str, str] = json.load(f)
     bl_human_vowels = {v: k for k, v in human_bl_vowels.items()}
+
+    def get_audio_metadata(batch): # not available from annotations; breaks if done during target finding
+        return {'length': batch['audio']['array'].size, 'sampling_rate': batch['audio']['sampling_rate']}
+    bl_metadata = bl.map(get_audio_metadata, remove_columns = 'audio') # cannot keep audio, raises error
+    bl = bl.add_column('length', bl_metadata['length']).add_column('sampling_rate', bl_metadata['sampling_rate'])
 
     def find_targets(batch):
         utterance: list[str] = batch['phonetic_transcription']['phone']
@@ -510,9 +519,13 @@ def prepare_blEV10Fold():
         syllable_vowel = [bl_human_vowels[utterance[i]] for i in vowel_indices]
         for i, vowel_index in enumerate(vowel_indices):
             preceding_vowel_index = next(reversed(vowel_indices[:i]), 0)
-            syllable_start[i] = round(batch['phonetic_transcription']['start'][preceding_vowel_index] * batch['audio']['sampling_rate'])
+            syllable_start[i] = round(batch['phonetic_transcription']['start'][preceding_vowel_index] * batch['sampling_rate'])
             following_vowel_index = next(iter(vowel_indices[i + 1:-1]), None)
-            syllable_end[i] = round(batch['phonetic_transcription']['stop'][following_vowel_index] * batch['audio']['sampling_rate']) if following_vowel_index else None
+            syllable_end[i] = round(batch['phonetic_transcription']['stop'][following_vowel_index] * batch['sampling_rate']) if following_vowel_index else batch['length']
+            if syllable_end[i] - syllable_start[i] < batch['sampling_rate'] // 4: # add centred padding to at least a quarter of a second
+                syllable_end[i] = min(syllable_end[i] + batch['sampling_rate'] // 8, batch['length']) # do not go past end
+                syllable_start[i] = max(0, syllable_end[i] - batch['sampling_rate'] // 4) # do not go before start
+                syllable_end[i] = syllable_start[i] + batch['sampling_rate'] // 4 
         batch['syllable_start'] = syllable_start
         batch['syllable_end'] = syllable_end
         batch['syllable_vowel'] = syllable_vowel
@@ -539,8 +552,9 @@ def prepare_blEV10Fold():
         }),
         gen_kwargs = {'dataset': bl},
     )).class_encode_column('label')
+    blEV = blEV.train_test_split(test_size = 0.1, stratify_by_column = 'label', shuffle = True)
     prep_blEV = audio_to_input_values(blEV)
-    return unannotate_dataset(k_fold(prep_blEV, stratify_by_column='label', split_by_column=None, distribute_CVCs=False))
+    return unannotate_dataset(prep_blEV)
 
 def prepare_timitEV():
     """Extracts TIMIT syllables into a dataset, which is prepared for training."""
