@@ -61,7 +61,7 @@ test_dataset = dataset[f'dev_{fold}']
 training_args = TrainingArguments(
     per_device_train_batch_size=32,
     eval_strategy='steps',
-    num_train_epochs=num_epochs,
+    max_steps=100000,
     bf16=True,
     save_steps=0.05,
     eval_steps=0.05,
@@ -85,7 +85,7 @@ trainer = Trainer(
     eval_dataset=test_dataset,
     processing_class=feature_extractor, # type: ignore # feature_extractor exists
     data_collator=DataCollatorWithPaddingForClassification(feature_extractor),
-    callbacks=[EarlyStoppingCallback(early_stopping_patience=3, early_stopping_threshold=0.001)],
+    callbacks=[EarlyStoppingCallback(early_stopping_patience=int(training_args.warmup_steps / training_args.eval_steps), early_stopping_threshold=0.001)], # never stop during warmup
     preprocess_logits_for_metrics=lambda logits, labels: numpy.argmax(logits[0].cpu(), axis=-1),
 )
 
