@@ -342,10 +342,11 @@ def prepare_wvENNonnativeResponses10Fold():
 
     human_responses = pd.read_csv('../human_vowel_responses.csv')
     human_responses = human_responses[(human_responses['language_indiv'] == 'english') & (human_responses['language_stimuli'] != 'EN')]
-    wvResponses = process_wv_responses(human_responses)
+    wvENNonnativeResponses = process_wv_responses(human_responses)
 
-    wvResponses = wvResponses.map(lambda batch: {'vowel_language': f"{batch['vowel']}_{batch['language']}"})
-    return k_fold(wvResponses, stratify_by_column='vowel_language')
+    wvENNonnativeResponses = wvENNonnativeResponses.map(lambda batch: {'vowel_language': f"{batch['vowel']}_{batch['language']}"})
+    prep_wvENNonnativeResponses = audio_to_input_values(wvENNonnativeResponses)
+    return unannotate_dataset(k_fold(prep_wvENNonnativeResponses, stratify_by_column='vowel_language', distribute_CVCs = False))
 
 def prepare_wvFRNonnativeResponses10Fold():
     """WV responses by French speakers on all stimuli."""
@@ -353,9 +354,10 @@ def prepare_wvFRNonnativeResponses10Fold():
     human_responses = pd.read_csv('../human_vowel_responses.csv')
     human_responses = human_responses[(human_responses['language_indiv'] == 'french') & (human_responses['language_stimuli'] != 'FR')]
 
-    wvResponses = process_wv_responses(human_responses)
-    wvResponses = wvResponses.map(lambda batch: {'vowel_language': f"{batch['vowel']}_{batch['language']}"})
-    return k_fold(wvResponses, stratify_by_column='vowel_language')
+    wvFRNonnativeResponses = process_wv_responses(human_responses)
+    wvFRNonnativeResponses = wvFRNonnativeResponses.map(lambda batch: {'vowel_language': f"{batch['vowel']}_{batch['language']}"})
+    prep_wvFRNonnativeResponses = audio_to_input_values(wvFRNonnativeResponses)
+    return unannotate_dataset(k_fold(prep_wvFRNonnativeResponses, stratify_by_column='vowel_language', distribute_CVCs = False))
 
 def prepare_wvENResponses():
     """Prepares World Vowels stimuli with individual responses as classifications."""
