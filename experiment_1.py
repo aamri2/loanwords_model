@@ -22,7 +22,7 @@ if (task // 40) % 2 == 0:
     base_model = 'w2v2-large'
     base_dataset = 'wvEN'
 elif (task // 40) % 2 == 1:
-    base_model = 'w2v2FR-large'
+    base_model = 'w2v2fr-large'
     base_dataset = 'wvFR'
 
 if (task // 20) % 2 == 0:
