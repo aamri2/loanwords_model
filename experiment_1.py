@@ -8,7 +8,6 @@ from model_architecture import Wav2Vec2LoanwordsModel, DataCollatorWithPaddingFo
 from math import ceil
 import torch
 import os
-import traceback
 import sys
 
 task = int(sys.argv[1]) # from slurm array task id
@@ -21,9 +20,11 @@ task = int(sys.argv[1]) # from slurm array task id
 if (task // 40) % 2 == 0:
     base_model = 'w2v2-large'
     base_dataset = 'wvEN'
+    language = 'EN'
 elif (task // 40) % 2 == 1:
     base_model = 'w2v2fr-large'
     base_dataset = 'wvFR'
+    language = 'FR'
 
 if (task // 20) % 2 == 0:
     model_name = 'mean'
@@ -34,8 +35,12 @@ elif (task // 20) % 2 == 1:
 
 if (task // 10) % 2 == 0:
     dataset_var = 'Responses10Fold'
+    domain = 'native'
 elif (task // 10) % 2 == 1:
     dataset_var = 'NonnativeResponses10Fold'
+    domain = 'nonnative'
+
+os.environ['TENSORBOARD_LOGGING_DIR'] = os.path.expanduser(f'~/scratch/experiment_1_tensorboard/{language}/{domain}/{model_name}')
 
 dataset = datasets.load_from_disk(f'../prep_{base_dataset}{dataset_var}')
 fold = task % 10
