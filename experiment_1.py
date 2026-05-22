@@ -13,25 +13,31 @@ import sys
 
 task = int(sys.argv[1]) # from slurm array task id
 # tasks (x 10 each):
-# [neural-mean native, neural-mean nonnative]
-# [neural-max native, neural-max nonnative]
+# [EN neural-mean native, EN neural-mean nonnative]
+# [EN neural-max native, EN neural-max nonnative]
+# [FR neural-mean native, FR neural-mean nonnative]
+# [FR neural-max native, FR neural-max nonnative]
 
-if task < 20:
+if (task // 40) % 2 == 0:
+    base_model = 'w2v2-large'
+    base_dataset = 'wvEN'
+elif (task // 40) % 2 == 1:
+    base_model = 'w2v2FR-large'
+    base_dataset = 'wvFR'
+
+if (task // 20) % 2 == 0:
     model_name = 'mean'
     model_config = {'temporal_pooling': 'mean'}
-elif task < 40:
+elif (task // 20) % 2 == 1:
     model_name = 'max'
     model_config = {'temporal_pooling': 'max', 'max_pooling_windows': 7}
 
 if (task // 10) % 2 == 0:
-    dataset_name = 'wvENResponses10Fold'
-    dataset = datasets.load_from_disk('../prep_wvENResponses10Fold')
-    num_epochs = 6997
+    dataset_var = 'Responses10Fold'
 elif (task // 10) % 2 == 1:
-    dataset_name = 'wvENNonnativeResponses10Fold'
-    dataset = datasets.load_from_disk('../prep_wvENNonnativeResponses10Fold')
-    num_epochs = 1378
+    dataset_var = 'NonnativeResponses10Fold'
 
+dataset = datasets.load_from_disk(f'../prep_{base_dataset}{dataset_var}')
 fold = task % 10
 
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
@@ -45,7 +51,7 @@ def compute_metrics(pred):
     return accuracy
 
 model = Wav2Vec2LoanwordsModel.from_pretrained(
-    '../w2v2-large',
+    f'../{base_model}',
     id2label = {i: v for i, v in enumerate(dataset['train_0'].features['label'].names)},
     label2id = {v: i for i, v in enumerate(dataset['train_0'].features['label'].names)},
     use_weighted_layer_sum = True,
@@ -70,7 +76,7 @@ training_args = TrainingArguments(
     weight_decay=0.005,
     warmup_steps=0.25,
     push_to_hub=False,
-    output_dir=os.path.expanduser(f'~/scratch/trainer_output_{model_name}_class_{dataset_name}_varHiddenRelu_cross_{fold}'),
+    output_dir=os.path.expanduser(f'~/scratch/trainer_output_{model_name}_class_{base_dataset}{dataset_var}_varHiddenRelu_cross_{fold}'),
     report_to='tensorboard',
     train_sampling_strategy='group_by_length',
     metric_for_best_model='eval_loss',
@@ -90,8 +96,8 @@ trainer = Trainer(
 )
 
 trainer.train()
-trainer.save_model(f'm_w2v2_{model_name}_class_{dataset_name}_varHiddenRelu_cross_{fold}')
-print(f'Saved model m_w2v2_{model_name}_class_{dataset_name}_varHiddenRelu_cross_{fold}.')
+trainer.save_model(f'm_{base_model}_{model_name}_class_2_{base_dataset}{dataset_var}_varHiddenRelu_cross_{fold}')
+print(f'Saved model m_{base_model}_{model_name}_class_2_{base_dataset}{dataset_var}_varHiddenRelu_cross_{fold}.')
 del trainer
 del model
 del train_dataset
