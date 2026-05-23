@@ -12,10 +12,35 @@ import sys
 
 task = int(sys.argv[1]) # from slurm array task id
 # tasks (x 10 each):
+# w2v2-nat:
 # [EN neural-mean native, EN neural-mean nonnative]
 # [EN neural-max native, EN neural-max nonnative]
 # [FR neural-mean native, FR neural-mean nonnative]
 # [FR neural-max native, FR neural-max nonnative]
+# w2v2-ml-10:
+# [EN neural-mean native, EN neural-mean nonnative]
+# [EN neural-max native, EN neural-max nonnative]
+# [FR neural-mean native, FR neural-mean nonnative]
+# [FR neural-max native, FR neural-max nonnative]
+# w2v2-ml-100:
+# [EN neural-mean native, EN neural-mean nonnative]
+# [EN neural-max native, EN neural-max nonnative]
+# [FR neural-mean native, FR neural-mean nonnative]
+# [FR neural-max native, FR neural-max nonnative]
+
+if (task // 10) % 2 == 0:
+    dataset_var = 'Responses10Fold'
+    domain = 'native'
+elif (task // 10) % 2 == 1:
+    dataset_var = 'NonnativeResponses10Fold'
+    domain = 'nonnative'
+
+if (task // 20) % 2 == 0:
+    model_name = 'mean'
+    model_config = {'temporal_pooling': 'mean'}
+elif (task // 20) % 2 == 1:
+    model_name = 'max'
+    model_config = {'temporal_pooling': 'max', 'max_pooling_windows': 7}
 
 if (task // 40) % 2 == 0:
     base_model = 'w2v2-large'
@@ -26,23 +51,18 @@ elif (task // 40) % 2 == 1:
     base_dataset = 'wvFR'
     language = 'FR'
 
-if (task // 20) % 2 == 0:
-    model_name = 'mean'
-    model_config = {'temporal_pooling': 'mean'}
-elif (task // 20) % 2 == 1:
-    model_name = 'max'
-    model_config = {'temporal_pooling': 'max', 'max_pooling_windows': 7}
-
-if (task // 10) % 2 == 0:
-    dataset_var = 'Responses10Fold'
-    domain = 'native'
-elif (task // 10) % 2 == 1:
-    dataset_var = 'NonnativeResponses10Fold'
-    domain = 'nonnative'
+if (task // 80) % 3 == 0:
+    base_model_type = 'w2v2-nat' # use earlier specified base_model
+elif (task // 80) % 3 == 1:
+    base_model_type = 'w2v2-ml-10'
+    base_model = 'w2v2ml-large-10'
+elif (task // 80) % 3 == 2:
+    base_model_type = 'w2v2-ml-100'
+    base_model = 'w2v2ml-large-100'
 
 dataset = datasets.load_from_disk(f'../prep_{base_dataset}{dataset_var}')
 fold = task % 10
-os.environ['TENSORBOARD_LOGGING_DIR'] = os.path.expanduser(f'~/scratch/experiment_1_tensorboard/{language}/{domain}/{model_name}/cross_{fold}')
+os.environ['TENSORBOARD_LOGGING_DIR'] = os.path.expanduser(f'~/scratch/experiment_1_tensorboard/{language}/{base_model_type}/{domain}/{model_name}/cross_{fold}')
 
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 accuracy_metric = evaluate.load('../metrics/accuracy')
