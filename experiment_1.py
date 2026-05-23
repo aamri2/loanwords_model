@@ -40,10 +40,9 @@ elif (task // 10) % 2 == 1:
     dataset_var = 'NonnativeResponses10Fold'
     domain = 'nonnative'
 
-os.environ['TENSORBOARD_LOGGING_DIR'] = os.path.expanduser(f'~/scratch/experiment_1_tensorboard/{language}/{domain}/{model_name}')
-
 dataset = datasets.load_from_disk(f'../prep_{base_dataset}{dataset_var}')
 fold = task % 10
+os.environ['TENSORBOARD_LOGGING_DIR'] = os.path.expanduser(f'~/scratch/experiment_1_tensorboard/{language}/{domain}/{model_name}/cross_{fold}')
 
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 accuracy_metric = evaluate.load('../metrics/accuracy')
