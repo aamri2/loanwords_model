@@ -88,11 +88,7 @@ feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000
 accuracy_metric = evaluate.load('../metrics/accuracy')
 
 def compute_metrics(pred):
-    pred_logits = pred.predictions[0] if isinstance(pred.predictions, tuple) else pred.predictions
-    pred_ids = pred_logits
-
-    accuracy = accuracy_metric.compute(predictions=pred_ids, references=pred.label_ids)
-    return accuracy
+    return accuracy_metric.compute(predictions=pred.predictions, references=pred.label_ids)
 
 model = model_init_fn(**model_config)
 if isinstance(model, Wav2Vec2LoanwordsModel):
@@ -128,7 +124,7 @@ trainer = Trainer(
     processing_class=feature_extractor, # type: ignore # feature_extractor exists
     data_collator=DataCollatorWithPaddingForClassification(feature_extractor),
     callbacks=[EarlyStoppingCallback(early_stopping_patience=int(training_args.warmup_steps / training_args.eval_steps), early_stopping_threshold=0.001)], # never stop during warmup
-    preprocess_logits_for_metrics=lambda logits, labels: numpy.argmax(logits[0].cpu(), axis=-1),
+    preprocess_logits_for_metrics=lambda logits, labels: numpy.argmax(logits[0].cpu() if isinstance(logits, tuple) else logits.cpu(), axis=-1),
 )
 
 trainer.train()
