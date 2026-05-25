@@ -4,7 +4,7 @@ from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict,
 import datasets
 import json
 import pandas as pd
-from typing import Sequence, overload, cast
+from typing import Sequence, overload, cast, Mapping
 import phonemizer.separator
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2PhonemeCTCTokenizer
 import phonemizer
@@ -60,6 +60,57 @@ class TrainingDataset():
             return datasets.concatenate_datasets([cast(datasets.DatasetDict, self.dataset)[split] for split in splits])
         else:
             return cast(datasets.DatasetDict, self.dataset)[splits]
+        
+    def add_files(self, test_dataset):
+        """Adds file names from a test dataset in a column {test_dataset}_file."""
+
+        test_df = test_dataset.dataset.to_pandas()
+        input_values = test_df['input_values'].apply(tuple)
+        if isinstance(self.dataset, DatasetDict):
+            self.dataset = DatasetDict({
+                split: self.dataset[split].add_column(f'{test_dataset.spec}_file', self.dataset[split].to_pandas().apply(lambda row: next(iter(test_df['file'][input_values == tuple(row['input_values'])]), None), axis=1))
+                for split in self.dataset.keys()
+            })
+        else:
+            self.dataset = self.dataset.add_column(f'{test_dataset.spec}_file', self.dataset.to_pandas().apply(lambda row: next(iter(test_df['file'][input_values == tuple(row['input_values'])]), None), axis=1))
+
+class TrainingDatasetMap(Mapping):
+    """Mapping for training datasets."""
+
+    def __init__(self, map=()):
+        self._map = dict(map)
+
+    @overload
+    def __getitem__(self, key: str | TrainingDatasetSpec) -> TrainingDataset: ...
+    @overload
+    def __getitem__(self, key: Sequence[str | TrainingDatasetSpec]) -> tuple[TrainingDataset, ...]: ...
+    def __getitem__(self, key: str | TrainingDatasetSpec | Sequence[str | TrainingDatasetSpec]) -> TrainingDataset | tuple[TrainingDataset, ...]:
+        if not (isinstance(key, (str, TrainingDatasetSpec)) or (isinstance(key, Sequence) and all(isinstance(k, (str, TrainingDatasetSpec)) for k in key))):
+            raise TypeError('Probability specification must be a string or list of strings!')
+        
+        if isinstance(key, Sequence) and not isinstance(key, str):
+            return tuple(self.__getitem__(k) for k in key)
+        
+        key = str(key)
+        if key not in self._map.keys():
+            return self.__missing__(key)
+        
+        return self._map[key]
+
+    def __missing__(self, key: str):
+        try:
+            self._map[key] = TrainingDataset(key)
+            return self._map[key]
+        except FileNotFoundError:
+            raise NotImplementedError(f'Cannot dynamically create training dataset {key}.')
+    
+    def __iter__(self):
+        return iter(self._map)
+    
+    def __len__(self):
+        return len(self._map)
+    
+d = TrainingDatasetMap()
 
 consonants = {
     'timit': ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh'],

@@ -321,12 +321,12 @@ class SpecComplex(Spec[Sequence[Spec | Sequence[Spec] | None]]):
                     value[value_name] = subvalue[0]
             return cls(value = None, **value) # typing complains if value not specified
 
-class BaseSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr', 'mfcc']):
+class BaseSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr', 'mfcc', 'w2v2-large', 'w2v2fr-large', 'w2v2ml-large-10', 'w2v2ml-large-100']):
     """Specification unit for base models."""
 
     @property
     def architecture(self) -> str:
-        if self.value in ['w2v2', 'w2v2fr']:
+        if self.value in ['w2v2', 'w2v2fr', 'w2v2-large', 'w2v2fr-large', 'w2v2ml-large-10', 'w2v2ml-large-100']:
             return 'Wav2Vec2'
         elif self.value == 'mfcc':
             return 'MFCC'
@@ -352,7 +352,7 @@ class FrozenSpec(SpecUnit, name = 'frozen', allowed_values = NaturalNumbers()):
 class TrainingDatasets(Container):
     base_datasets = ['timit', 'librispeech', 'librispeechFR', 'bl', 'wv']
     language_variants = ['EN', 'FR'] # one language
-    neutral_variants = ['EV', 'MV', 'S', 'A', 'CL', 'N', 'Responses'] # these don't affect parsing in any way
+    neutral_variants = ['EV', 'MV', 'S', 'A', 'CL', 'N', 'Responses', 'Nonnative'] # these don't affect parsing in any way
     special_variants = ['10Fold'] # only one special variant allowed
     parser = re.compile(f"({'|'.join(base_datasets)})({'|'.join(language_variants)})?(?:{'|'.join(neutral_variants)})*({'|'.join(special_variants)})?") # base_dataset + optional neutral_variant + optional special_variant
 
@@ -371,7 +371,7 @@ class TrainingDatasets(Container):
         """Language of dataset, if specified."""
         
         if x in self:
-            return cast(re.Match[str], self.parser.search(x)).group(2)
+            return cast(re.Match[str], self.parser.fullmatch(x)).group(2)
         else:
             raise ValueError(f"{x} is not a valid dataset.")
     
@@ -379,7 +379,7 @@ class TrainingDatasets(Container):
         """The special variants that can affect parsing."""
 
         if x in self:
-            return cast(re.Match[str], self.parser.search(x)).groups()[-1]
+            return cast(re.Match[str], self.parser.fullmatch(x)).groups()[-1]
         else:
             raise ValueError(f"{x} is not a valid dataset.")
 
@@ -395,6 +395,10 @@ class TrainingDatasetSpec(SpecUnit, name = 'training_dataset', allowed_values = 
     @property
     def variant(self):
         return self._allowed_values.variant(self.value)
+    
+    @property
+    def language(self):
+        return self._allowed_values.language(self.value)
 
 
 class TrainingVars(Container):
@@ -407,8 +411,6 @@ class TrainingVars(Container):
 
 class TrainingVarSpec(SpecUnit, name = 'training_var', allowed_values = TrainingVars()):
     """Variants of training that do not affect processing."""
-
-    value: TrainingVars
 
 class TrainingSpec(SpecComplex, name = 'training', value_types = [LayerSpec, FrozenSpec, TrainingDatasetSpec, TrainingVarSpec], optional = TrainingVarSpec, multiple = [LayerSpec, TrainingVarSpec]):
     """Specification for model trainings."""
@@ -484,18 +486,59 @@ class ModelSpec(SpecComplex, name = 'model', value_types = [BaseSpec, TrainingSp
         return self.layers[-1]
     
     @property
+    def last_training(self) -> TrainingSpec:
+        """The specification of the final training of the model."""
+
+        if isinstance(self.training, Sequence):
+            return self.training[-1]
+        else:
+            return self.training
+    
+    @property
     def output_dataset(self) -> TrainingDatasetSpec:
         """The specification of the final training dataset in the model."""
         
-        if isinstance(self.training, Sequence):
-            _output_dataset = self.training[-1].training_dataset
+        return self.last_training.training_dataset
+        
+    @property
+    def training_split(self) -> str | tuple[str, ...]:
+        """The split(s) of the dataset that the model was traind on."""
+        
+        if '10Fold' in self.output_dataset.variant:
+            if not isinstance(self.last_training.training_var, tuple) or not any(training_var.value == 'cross' for training_var in self.last_training.training_var):
+                raise ValueError("A model trained on a 10Fold dataset must specify a cross!")
+            cross = next(int(self.last_training.training_var[i + 1].value) for i, x in enumerate(self.last_training.training_var) if x.value == 'cross')
+            if cross == 'N':
+                return tuple(f'train_{i}' for i in range(10)) + tuple(f'dev_{i}' for i in range(10))
+            else:
+                try:
+                    cross = int(cross)
+                    assert 0 <= cross < 10
+                except (ValueError, AssertionError) as e:
+                    raise ValueError(f"Cross must be a number between 0 and 9. Got: {cross}.")
+                return (f'train_{cross}', f'dev_{cross}')
         else:
-            _output_dataset = self.training.training_dataset
+            return 'train'
+        
+    @property
+    def eval_split(self) -> str | tuple[str, ...]:
+        """The dataset split(s) the model was evaluated on."""
 
-        if isinstance(_output_dataset, Sequence):
-            return _output_dataset[-1]
+        if self.output_dataset.variant == '10Fold':
+            if not isinstance(self.last_training.training_var, tuple) or not any(training_var.value == 'cross' for training_var in self.last_training.training_var):
+                raise ValueError("A model trained on a 10Fold dataset must specify a cross!")
+            cross = next(int(self.last_training.training_var[i + 1].value) for i, x in enumerate(self.last_training.training_var) if x.value == 'cross')
+            if cross == 'N':
+                return tuple()
+            else:
+                try:
+                    cross = int(cross)
+                    assert 0 <= cross < 10
+                except (ValueError, AssertionError) as e:
+                    raise ValueError(f"Cross must be a number between 0 and 9. Got: {cross}.")
+                return f'test_{cross}'
         else:
-            return _output_dataset
+            return 'test'
 
 class HumanSpec(SpecUnit, name = 'humans', allowed_values = ['humans', 'humansFR']):
     """Specification of participant response pool."""

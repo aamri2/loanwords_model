@@ -1,6 +1,6 @@
-from typing import Mapping, Sequence, overload, cast
-from spec import ProbabilitySpec, HumanProbabilitySpec, _SEPARATOR
 from probabilities_handler import Probabilities, HumanProbabilities, _PROBABILITIES_PATH, _PROBABILITIES_PREFIX
+from typing import Mapping, Sequence, overload, cast, Any, Iterable
+from spec import ProbabilitySpec, HumanProbabilitySpec, _SEPARATOR
 from model_handler import _MODEL_PATH, _MODEL_PREFIX
 import glob
 import warnings
@@ -8,7 +8,10 @@ import matplotlib.pyplot as plt
 from scipy.spatial.distance import jensenshannon
 import seaborn as sns
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
+
+AnyProbabilitiesSpec = str | ProbabilitySpec | HumanProbabilitySpec
 
 class ProbabilitiesMap(Mapping):
     """
@@ -18,19 +21,19 @@ class ProbabilitiesMap(Mapping):
     """
     
     def __init__(self, map = (), autoload = False, path: str = _PROBABILITIES_PATH):
-        self._map: dict[str | ProbabilitySpec | HumanProbabilitySpec, Probabilities] = dict(map)
+        self._map: dict[AnyProbabilitiesSpec, Probabilities | HumanProbabilities] = dict(map)
         self.path = path
         
         if autoload:
             self.autoload_probabilities()
 
-    def load(self, spec: str | ProbabilitySpec | HumanProbabilitySpec, *args, **kwargs) -> None:
+    def load(self, spec: AnyProbabilitiesSpec, model_kwargs: dict[str, Any] = {}) -> None:
         spec = str(spec)
         try:
-            self._map[spec] = Probabilities(spec, *args, path=self.path, **kwargs)
+            self._map[spec] = Probabilities(spec, path=self.path, model_kwargs=model_kwargs)
         except (ValueError, NotImplementedError):
             try:
-                self._map[spec] = HumanProbabilities(spec, *args, **kwargs)
+                self._map[spec] = HumanProbabilities(spec, path=self.path)
             except (ValueError, NotImplementedError):
                 raise ValueError(f"Invalid probability spec: {spec}.")
 
@@ -39,12 +42,12 @@ class ProbabilitiesMap(Mapping):
     @overload
     def __getitem__(self, key: str | HumanProbabilitySpec) -> HumanProbabilities: ...
     @overload
-    def __getitem__(self, key: Sequence[str | ProbabilitySpec | HumanProbabilitySpec]) -> list[Probabilities | HumanProbabilities]: ...
-    def __getitem__(self, key: str | ProbabilitySpec | HumanProbabilitySpec | Sequence[str | ProbabilitySpec | HumanProbabilitySpec]) -> Probabilities | HumanProbabilities | list[Probabilities | HumanProbabilities]:
+    def __getitem__(self, key: Iterable[AnyProbabilitiesSpec]) -> list[Probabilities | HumanProbabilities]: ...
+    def __getitem__(self, key: AnyProbabilitiesSpec | Iterable[AnyProbabilitiesSpec]) -> Probabilities | HumanProbabilities | list[Probabilities | HumanProbabilities]:
         if not isinstance(key, (str, ProbabilitySpec, HumanProbabilitySpec)):
-            if not isinstance(key, Sequence) or any(not isinstance(k, (str, ProbabilitySpec, HumanProbabilitySpec)) for k in key):
+            if not isinstance(key, Iterable) or any(not isinstance(k, (AnyProbabilitiesSpec)) for k in key):
                 raise TypeError('Probability specification must be a string or list of strings!')
-            elif isinstance(key, Sequence):
+            elif isinstance(key, Iterable):
                 return [self.__getitem__(k) for k in key]
         
         if key not in self._map.keys():
@@ -52,7 +55,7 @@ class ProbabilitiesMap(Mapping):
         
         return self._map[key]
 
-    def __missing__(self, key: str | ProbabilitySpec | HumanProbabilitySpec):
+    def __missing__(self, key: AnyProbabilitiesSpec):
         try:
             self.load(key)
             return self._map[key]
@@ -81,7 +84,7 @@ class ProbabilitiesMap(Mapping):
         probabilities = tuple(path[2: - 4] for path in paths)
         return probabilities
     
-    def heatmap(self, keys: Sequence[str | ProbabilitySpec | HumanProbabilitySpec], *args, **kwargs):
+    def heatmap(self, keys: Sequence[AnyProbabilitiesSpec], *args: str, **kwargs: str | Iterable[str]):
         df = pd.concat((self[key].pool(*args, **kwargs) for key in keys), keys=[str(key) for key in keys]).reset_index(level=0,names='p')
         g = sns.FacetGrid(df, col_wrap=min(len(keys), 3), col='p', height=2.5)
         g.map_dataframe(lambda data, **kwargs: sns.heatmap(data[[column for column in df.columns if column != 'p']], **kwargs), cmap = 'crest', square = True, xticklabels = True, yticklabels = True)
@@ -89,19 +92,45 @@ class ProbabilitiesMap(Mapping):
         plt.subplots_adjust(top=.9)
         plt.show(block = False)
     
-    def js_divergence(self, key1: str | ProbabilitySpec | HumanProbabilitySpec, key2: str | ProbabilitySpec | HumanProbabilitySpec, *args, **kwargs) -> list[float]:
+    @overload
+    def js_divergence(self, key1: AnyProbabilitiesSpec, key2: AnyProbabilitiesSpec, *args, **kwargs) -> np.ndarray: ...
+    @overload
+    def js_divergence(self, key1: AnyProbabilitiesSpec, key2: Iterable[AnyProbabilitiesSpec], *args, **kwargs) -> list[np.ndarray]: ...
+    def js_divergence(self, key1: AnyProbabilitiesSpec, key2: AnyProbabilitiesSpec | Iterable[AnyProbabilitiesSpec], *args: str, **kwargs: str | Iterable[str]) -> np.ndarray | list[np.ndarray]:
         """The Jensen-Shannon Divergences between two pooled probabilities, by row."""
 
+        if isinstance(key2, Iterable) and not isinstance(key2, AnyProbabilitiesSpec):
+            return [self.js_divergence(key1, key, *args, **kwargs) for key in key2]
         p = self[key1].pool(*args, **kwargs)
         q = self[key2].pool(*args, **kwargs)
-        js_divergences = [jensenshannon(p.iloc[row], q.iloc[row])**2 for row in range(len(p))] # square JS distance to get JS divergence
-        return cast(list[float], js_divergences)
+        common_index = p.index.intersection(q.index)
+
+        js_divergences = jensenshannon(p.loc[common_index], q.loc[common_index], axis=1) # square JS distance to get JS divergence
+        return js_divergences
     
-    def entropy_histogram(self, key: Sequence[str | ProbabilitySpec | HumanProbabilitySpec], *args, **kwargs):
+    @overload
+    def accuracy(self, key1: AnyProbabilitiesSpec, key2: AnyProbabilitiesSpec, *args, **kwargs) -> float: ...
+    @overload
+    def accuracy(self, key1: AnyProbabilitiesSpec, key2: Iterable[AnyProbabilitiesSpec], *args, **kwargs) -> list[float]: ...
+    def accuracy(self, key1: AnyProbabilitiesSpec, key2: AnyProbabilitiesSpec | Iterable[AnyProbabilitiesSpec], *args, **kwargs) -> float | list[float]:
+        """The percentage of shared row-wise argmaxes between the first and second probabilities."""
+
+        if isinstance(key2, Iterable) and not isinstance(key2, AnyProbabilitiesSpec):
+            return [self.accuracy(key1, key, *args, **kwargs) for key in key2]
+        p = self[key1].pool(*args, **kwargs)
+        q = self[key2].pool(*args, **kwargs)
+        common_index = p.index.intersection(q.index)
+
+        p_classifications = p.loc[common_index].apply(lambda x: x.argmax(), axis=1)
+        q_classifications = q.loc[common_index].apply(lambda x: x.argmax(), axis=1)
+        accuracy = (p_classifications == q_classifications).astype(int).mean()
+        return accuracy
+    
+    def entropy_histogram(self, key: Iterable[AnyProbabilitiesSpec], *args, **kwargs):
         for probability in key:
             self[probability].entropy_histogram(*args, **kwargs)
     
-    def js_divergence_histogram(self, key1: str | ProbabilitySpec | HumanProbabilitySpec, key2: str | ProbabilitySpec | HumanProbabilitySpec | Sequence[str | ProbabilitySpec | HumanProbabilitySpec], *args, **kwargs):
+    def js_divergence_histogram(self, key1: AnyProbabilitiesSpec, key2: AnyProbabilitiesSpec | Iterable[AnyProbabilitiesSpec], *args, **kwargs):
         if not isinstance(key2, str) and isinstance(key2, Sequence):
             df = pd.DataFrame({key: self.js_divergence(key1, key, *args, **kwargs) for key in key2}).melt(var_name='p', value_name='JS-div')
             g = sns.displot(df, x='JS-div', col='p', col_wrap=min(len(key2), 3))

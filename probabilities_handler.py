@@ -1,15 +1,15 @@
+from model_handler import Model
+from model_handler import probabilities as legacy_probabilities
 from spec import ProbabilitySpec, HumanProbabilitySpec, _SEPARATOR
 from datasets import Dataset
 from test_dataset_handler import t, TestDataset
-from dataset_handler import TrainingDataset
-from model_handler import Model
-from model_handler import probabilities as legacy_probabilities
+from dataset_handler import TrainingDataset, d
 import pandas as pd
 import seaborn as sns
 import numpy as np
 from scipy import stats
 from matplotlib import pyplot as plt
-from typing import cast, Sequence, Any
+from typing import cast, Sequence, Any, Iterable
 from math import prod
 
 _PROBABILITIES_PATH = 'probabilities/'
@@ -29,10 +29,9 @@ class Probabilities():
         self.spec = ProbabilitySpec(spec)
         self.path = path
         self.test_dataset = t[self.spec.test_dataset]
-        self.model = Model(self.spec.model, **model_kwargs)
-        self.probabilities = self.load_probabilities(prefix=prefix)
+        self.probabilities = self.load_probabilities(prefix=prefix, model_kwargs=model_kwargs)
 
-    def pool(self, *args: str, **kwargs: str) -> pd.DataFrame:
+    def pool(self, *args: str, **kwargs: str | Iterable[str]) -> pd.DataFrame:
         """
         Returns a pivot table in wide format.
         
@@ -45,7 +44,7 @@ class Probabilities():
         if kwargs:
             mask = pd.Series(True, index=probabilities.index)
             for column, value in kwargs.items():
-                if not isinstance(value, str) and isinstance(value, Sequence):
+                if not isinstance(value, str) and isinstance(value, Iterable):
                     mask = mask & probabilities[column].isin(value)
                 else:
                     mask = mask & (probabilities[column] == value)
@@ -75,15 +74,16 @@ class Probabilities():
         plt.title(f'{self.spec} entropies (by {args}, {kwargs})', wrap=True)
         plt.show(block = False)
 
-    def load_probabilities(self, prefix: str = _PROBABILITIES_PREFIX) -> pd.DataFrame:
+    def load_probabilities(self, prefix: str = _PROBABILITIES_PREFIX, model_kwargs: dict[str, Any] = {}) -> pd.DataFrame:
         """Loads fully-prepared probabilities from a specification. Attempts to create them if missing."""
 
         try:
             probabilities = pd.read_csv(f'{self.path}{prefix}{_SEPARATOR}{self.spec}.csv')
         except:
             if 'max' in str(self.spec) or 'mean' in str(self.spec):
-                label2id = self.model.vocab
-                probabilities = legacy_probabilities(self.model.model, self.test_dataset.dataset, id2label = {v: k for k, v in label2id.items()})
+                model = Model(self.spec.model, **model_kwargs)
+                label2id = model.vocab
+                probabilities = legacy_probabilities(model.model, self.test_dataset.dataset, id2label = {v: k for k, v in label2id.items()})
             else:
                 raise NotImplementedError("Cannot dynamically generate probabilities yet.")
         
@@ -101,6 +101,8 @@ class Probabilities():
             training_dataset = self.spec.model.training[-1].training_dataset if isinstance(self.spec.model.training, tuple) else self.spec.model.training.training_dataset
             if training_dataset.family == self.spec.test_dataset.value:
                 probabilities = self._add_training(probabilities)
+            else:
+                probabilities['training'] = 'no'
         return probabilities
     
     def _add_formants(self, probabilities: pd.DataFrame) -> pd.DataFrame:
@@ -127,22 +129,16 @@ class Probabilities():
     def _add_training(self, probabilities: pd.DataFrame) -> pd.DataFrame:
         """Adds a column indicating which files were present in the training dataset for the model."""
 
-        training_dataset = TrainingDataset(self.spec.model.training[-1].training_dataset if isinstance(self.spec.model.training, tuple) else self.spec.model.training.training_dataset)
-        train_df = cast(pd.DataFrame, training_dataset.get_split(self.model.training_split).to_pandas())
-        test_df = cast(pd.DataFrame, training_dataset.get_split(self.model.eval_split).to_pandas())
-        if not 'file' in train_df.columns and 'input_values' in train_df.columns:
-            train_df = self._add_files(train_df)
-            test_df = self._add_files(train_df)
-        probabilities['training'] = probabilities['file'].case_when(caselist=[(probabilities['file'].isin(train_df['file']), 'train'), (probabilities['file'].isin(test_df['file']), 'test'), (pd.Series(True, index=probabilities.index), 'no')])
+        training_dataset = d[self.spec.model.last_training.training_dataset]
+        train_ds = training_dataset.get_split(self.spec.model.training_split)
+        test_ds = training_dataset.get_split(self.spec.model.eval_split)
+        if not f'{self.test_dataset.spec}_file' in train_ds.column_names and 'input_values' in train_ds.column_names:
+            d[self.spec.model.last_training.training_dataset].add_files(self.test_dataset)
+            training_dataset = d[self.spec.model.last_training.training_dataset]
+            train_ds = training_dataset.get_split(self.spec.model.training_split)
+            test_ds = training_dataset.get_split(self.spec.model.eval_split)
+        probabilities['training'] = probabilities['file'].case_when(caselist=[(probabilities['file'].isin(train_ds[f'{self.test_dataset.spec}_file']), 'train'), (probabilities['file'].isin(test_ds[f'{self.test_dataset.spec}_file']), 'test'), (pd.Series(True, index=probabilities.index), 'no')])
         return probabilities
-    
-    def _add_files(self, df: pd.DataFrame):
-        """Add file names to a DataFrame containing input_values."""
-
-        test_df = cast(pd.DataFrame, self.test_dataset.dataset.to_pandas())
-        input_values = test_df['input_values'].apply(tuple)
-        df['file'] = df.apply(lambda row: next(iter(test_df['file'][input_values == tuple(row['input_values'])]), None), axis=1) # allow for unrecognized files
-        return df
     
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}({repr(str(self.spec))})'
@@ -162,7 +158,13 @@ def world_vowel_sort(data: pd.DataFrame):
 class HumanProbabilities(Probabilities):
     spec: HumanProbabilitySpec
 
-    def __init__(self, spec: str | HumanProbabilitySpec):
+    def __init__(self, spec: str | HumanProbabilitySpec, path: str = _PROBABILITIES_PATH):
         self.spec = HumanProbabilitySpec(spec)
+        self.path = path
         self.test_dataset = TestDataset(self.spec.test_dataset)
         self.probabilities = self.load_probabilities()
+
+    def pool(self, *args: str, training=None, **kwargs: str | Iterable[str]) -> pd.DataFrame:
+        """Ignore column 'training'."""
+
+        return super().pool(*args, **kwargs)

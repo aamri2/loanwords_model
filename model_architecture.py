@@ -13,7 +13,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers import Wav2Vec2Config
 from typing import Dict, List, Optional, Union, Any, cast
 from dataclasses import dataclass
-from torchaudio.transforms import MFCC
+from torchaudio.transforms import MFCC, MelScale, Spectrogram
 import os
 import safetensors.torch
 
@@ -1120,7 +1120,6 @@ class MFCCLoanwordsModel(PreTrainedModel):
     
     def __init__(self, config: MFCCLoanwordsConfig):
         super().__init__(config)
-        self.mfcc = MFCC(n_mfcc=config.n_mfcc, sample_rate=config.sample_rate)
         output_size = config.n_mfcc
     
         # transformer?
@@ -1186,6 +1185,19 @@ class MFCCLoanwordsModel(PreTrainedModel):
                     )
         self.config = config
         self.post_init()
+    
+    @property
+    def mfcc(self):
+        """Lazy MFCC module to prevent initialization errors from loading tensors on meta device."""
+
+        if not hasattr(self, '_mfcc_transform') or self._mfcc_transform is None:
+            self._mfcc_transform = MFCC(n_mfcc=self.config.n_mfcc, sample_rate=self.config.sample_rate)
+            try:
+                device = next(self.parameters()).device
+                self._mfcc_transform = self._mfcc_transform.to(device)
+            except StopIteration:
+                pass # no parameters yet
+        return self._mfcc_transform
 
     def _init_weights(self, module):
         super()._init_weights(module)
