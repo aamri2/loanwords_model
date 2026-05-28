@@ -736,7 +736,8 @@ class FormantFeatureExtractor(SequenceFeatureExtractor):
             raise ValueError(f"Feature size {self.feature_size} is more than half of order {self.order}!")
 
     def _extract_formants(self, audio: np.ndarray) -> np.ndarray:
-        """Extract formant frequencies frame-by-frame using LPC analysis.
+        """
+        Extract formant frequencies frame-by-frame using LPC analysis.
         
         Returns array of shape (num_frames, feature_size) with formant
         frequencies in Hz, sorted ascending. Frames with fewer than
@@ -747,9 +748,10 @@ class FormantFeatureExtractor(SequenceFeatureExtractor):
             audio, frame_length=self.win_length, hop_length=self.hop_length
         ).T  # (num_frames, win_length)
         window = np.hanning(self.win_length)
+        preemph = np.array([1, -0.97])
         result = []
         for frame in frames:
-            lpc_coeffs = librosa.lpc(frame * window, order=self.order)
+            lpc_coeffs = librosa.lpc(np.convolve(frame, preemph, mode='same') * window, order=self.order)
             roots = np.roots(lpc_coeffs)
             # take one of each conjugate pair; keep stable roots with positive angle
             roots = roots[np.imag(roots) >= 0]
