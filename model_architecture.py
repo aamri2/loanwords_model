@@ -716,6 +716,8 @@ class FormantFeatureExtractor(SequenceFeatureExtractor):
             The value to pad the sequence with.
     """
 
+    model_input_names = ['input_values']
+
     def __init__(
         self,
         sampling_rate: int = 16000,
