@@ -877,8 +877,8 @@ class DataCollatorFormantWithPadding:
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
         raw = [np.asarray(f['input_values'], dtype=np.float32) for f in features]
-        labels = [f['labels'] for f in features] if 'labels' in features[0] else None
+        label_key = next((k for k in ('labels', 'label') if k in features[0]), None)
         batch = dict(self.extractor(raw, return_tensors='pt'))
-        if labels is not None:
-            batch['labels'] = torch.tensor(labels).long()
+        if label_key is not None:
+            batch['labels'] = torch.tensor([f[label_key] for f in features]).long()
         return batch
