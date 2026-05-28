@@ -20,7 +20,7 @@ task = int(sys.argv[1]) # from slurm array task id
 # FR CTC # TODO
 
 if task < 22: # classifier
-    model_config = {'classifier_head': True, 'classifier_hidden': True, 'classifier_hidden_activation_function': 'relu', 'temporal_pooling': 'mean'}
+    model_config = {'classifier_head': True, 'classifier_hidden': True, 'classifier_hidden_activation_function': 'relu', 'temporal_pooling': 'max', 'max_pooling_windows': 7}
 
     if task // 11 == 0: # EN
         language = 'EN'
