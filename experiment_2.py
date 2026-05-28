@@ -78,7 +78,7 @@ training_args = TrainingArguments(
     weight_decay=0.005,
     warmup_steps=0.25,
     push_to_hub=False,
-    output_dir=os.path.expanduser(f'~/scratch/trainer_output_{base_model}_mean_class_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold else ""}'),
+    output_dir=os.path.expanduser(f'~/scratch/trainer_output_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold else ""}'),
     report_to='tensorboard',
     train_sampling_strategy='group_by_length',
     metric_for_best_model='eval_loss',
@@ -98,8 +98,8 @@ trainer = Trainer(
 )
 
 trainer.train()
-trainer.save_model(f'm_{base_model}_mean_class_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold else ""}')
-print(f'Saved model m_{base_model}_mean_class_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold else ""}.')
+trainer.save_model(f'm_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold else ""}')
+print(f'Saved model m_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold else ""}.')
 del trainer
 del model
 del train_dataset
