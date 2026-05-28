@@ -4,7 +4,11 @@ from transformers.trainer import Trainer
 from transformers.training_args import TrainingArguments
 import evaluate
 import numpy
-from model_architecture import Wav2Vec2LoanwordsModel, DataCollatorWithPaddingForClassification, MFCCLoanwordsModel, MFCCLoanwordsConfig
+from model_architecture import (
+    Wav2Vec2LoanwordsModel, DataCollatorWithPaddingForClassification,
+    MFCCLoanwordsModel, MFCCLoanwordsConfig,
+    FormantLoanwordsModel, FormantLoanwordsConfig, DataCollatorFormantWithPadding, FormantFeatureExtractor,
+)
 from math import ceil
 import torch
 import os
@@ -28,6 +32,11 @@ task = int(sys.argv[1]) # from slurm array task id
 # [FR neural-mean native, FR neural-mean nonnative]
 # [FR neural-max native, FR neural-max nonnative]
 # mfcc:
+# [EN neural-mean native, EN neural-mean nonnative]
+# [EN neural-max native, EN neural-max nonnative]
+# [FR neural-mean native, FR neural-mean nonnative]
+# [FR neural-max native, FR neural-max nonnative]
+# formant:
 # [EN neural-mean native, EN neural-mean nonnative]
 # [EN neural-max native, EN neural-max nonnative]
 # [FR neural-mean native, FR neural-mean nonnative]
@@ -58,23 +67,33 @@ elif (task // 40) % 2 == 1:
     base_dataset = 'wvFR'
     language = 'FR'
 
-if (task // 80) % 4 < 3:
-    match (task // 80) % 4:
-        case 0:
-            base_model_type = 'w2v2-nat' # use earlier specified base_model
-            base_model = native_base_model
-        case 1:
-            base_model_type = 'w2v2-ml-10'
-            base_model = 'w2v2ml-large-10'
-        case 2:
-            base_model_type = 'w2v2-ml-100'
-            base_model = 'w2v2ml-large-100'
-    model_config |= {'pretrained_model_name_or_path': f'../{base_model}', 'use_weighted_layer_sum': True}
-    model_init_fn = Wav2Vec2LoanwordsModel.from_pretrained
-elif (task // 80) % 4 == 3:
-    base_model_type = 'mfcc'
-    base_model = 'mfcc'
-    model_init_fn = lambda *args, **kwargs: MFCCLoanwordsModel(MFCCLoanwordsConfig(*args, **kwargs))
+if (task // 80) % 5 < 4:
+    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+    data_collator = DataCollatorWithPaddingForClassification(feature_extractor)
+    if (task // 80) % 5 < 3:
+        match (task // 80) % 5:
+            case 0:
+                base_model_type = 'w2v2-nat'
+                base_model = native_base_model
+            case 1:
+                base_model_type = 'w2v2-ml-10'
+                base_model = 'w2v2ml-large-10'
+            case 2:
+                base_model_type = 'w2v2-ml-100'
+                base_model = 'w2v2ml-large-100'
+        model_config |= {'pretrained_model_name_or_path': f'../{base_model}', 'use_weighted_layer_sum': True}
+        model_init_fn = Wav2Vec2LoanwordsModel.from_pretrained
+    elif (task // 80) % 5 == 3:
+        base_model_type = 'mfcc'
+        base_model = 'mfcc'
+        model_init_fn = lambda *args, **kwargs: MFCCLoanwordsModel(MFCCLoanwordsConfig(*args, **kwargs))
+elif (task // 80) % 5 == 4:
+    feature_extractor = FormantFeatureExtractor(sampling_rate=16000, feature_size=5)
+    data_collator = DataCollatorFormantWithPadding(feature_extractor)
+    base_model_type = 'formant'
+    base_model = 'formant'
+    model_config |= {'n_formants': feature_extractor.feature_size}
+    model_init_fn = lambda *args, **kwargs: FormantLoanwordsModel(FormantLoanwordsConfig(*args, **kwargs))
 
 dataset = datasets.load_from_disk(f'../prep_{base_dataset}{dataset_var}')
 model_config |= {
@@ -84,7 +103,6 @@ model_config |= {
 fold = task % 10
 os.environ['TENSORBOARD_LOGGING_DIR'] = os.path.expanduser(f'~/scratch/experiment_1_tensorboard/{language}/{base_model_type}/{domain}/{model_name}/cross_{fold}')
 
-feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 accuracy_metric = evaluate.load('../metrics/accuracy')
 
 def compute_metrics(pred):
@@ -122,9 +140,9 @@ trainer = Trainer(
     train_dataset=train_dataset,
     eval_dataset=test_dataset,
     processing_class=feature_extractor, # type: ignore # feature_extractor exists
-    data_collator=DataCollatorWithPaddingForClassification(feature_extractor),
+    data_collator=data_collator,
     callbacks=[EarlyStoppingCallback(early_stopping_patience=int(training_args.warmup_steps / training_args.eval_steps), early_stopping_threshold=0.001)], # never stop during warmup
-    preprocess_logits_for_metrics=lambda logits, labels: numpy.argmax(logits[0].cpu() if isinstance(logits, tuple) else logits.cpu(), axis=-1),
+    preprocess_logits_for_metrics=lambda logits, labels: (logits[0] if isinstance(logits, tuple) else logits).cpu().numpy().argmax(axis=-1),
 )
 
 trainer.train()

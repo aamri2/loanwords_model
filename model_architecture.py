@@ -7,15 +7,18 @@ from transformers.trainer import Trainer
 from transformers.utils import SAFE_WEIGHTS_NAME
 from transformers.configuration_utils import PretrainedConfig
 from transformers.feature_extraction_utils import BatchFeature
+from transformers.feature_extraction_sequence_utils import SequenceFeatureExtractor
 from transformers.modeling_outputs import CausalLMOutput
 from transformers.data.data_collator import DataCollatorWithPadding
 from transformers.modeling_utils import PreTrainedModel
 from transformers import Wav2Vec2Config
-from typing import Dict, List, Optional, Union, Any, cast
+from typing import Dict, List, Optional, Union, Any, cast, Literal
 from dataclasses import dataclass
 from torchaudio.transforms import MFCC, MelScale, Spectrogram
 import os
 import safetensors.torch
+import numpy as np
+import librosa
 
 _HIDDEN_STATES_START_POSITION = 2
 
@@ -558,10 +561,244 @@ class MFCCLoanwordsModel(PreTrainedModel):
             loss=loss, logits=logits # type: ignore # can't tell tensor dtype
         )
 
+class FormantLoanwordsConfig(LoanwordsConfig):
+    """
+    LoanwordsConfig for formant models.
+    
+    Args:
+        n_formants (`int`, *optional*, defaults to 5):
+            The number of formants in the input.
+    """
+    
+    def __init__(self, n_formants: int = 5, **kwargs):
+        super().__init__(**kwargs)
+        self.n_formants = n_formants
+
+class FormantLoanwordsModel(PreTrainedModel):
+    """Like MFCCLoanwordsModel but expects pre-extracted formant features as input_values."""
+
+    config_class = FormantLoanwordsConfig
+
+    def __init__(self, config: FormantLoanwordsConfig):
+        super().__init__(config)
+        output_size = config.n_formants
+
+        if config.transform_hidden_outputs:
+            self.transformer = nn.TransformerEncoder(
+                encoder_layer=nn.TransformerEncoderLayer(d_model=output_size, nhead=5, dim_feedforward=output_size, batch_first=True),
+                num_layers=6
+            )
+
+        if config.ctc_head:
+            self.dropout = nn.Dropout(config.final_dropout)
+            self.lm_head = nn.Linear(output_size, config.vocab_size)
+            output_size = config.vocab_size
+            if config.l2_head:
+                self.l2_head = nn.Linear(config.vocab_size, config.l2_vocab_size)
+                output_size = config.l2_vocab_size
+
+        if config.classifier_head:
+            if config.temporal_pooling == 'max':
+                max_pooling_layers = []
+                if not config.max_pooling_windows or config.max_pooling_windows < 1:
+                    raise ValueError(f"Max pooling requires a positive integer value for max_pooling_windows, but received {config.max_pooling_windows}.")
+                max_pooling_layers.append(nn.AdaptiveMaxPool1d(config.max_pooling_windows))
+                if config.max_pooling_windows > 1:
+                    max_pooling_layers.append(nn.Linear(config.max_pooling_windows, 1))
+                if config.preclassifier_activation_function:
+                    if config.preclassifier_activation_function == 'relu':
+                        max_pooling_layers.append(nn.ReLU())
+                    else:
+                        raise ValueError(f"Unknown preclassifier activation function: {config.preclassifier_activation_function}.")
+                self.max_pooling = nn.Sequential(*max_pooling_layers)
+            elif config.temporal_pooling == 'mean':
+                self.mean_pooling = nn.AdaptiveAvgPool1d(1)
+            else:
+                raise ValueError(f'Unknown temporal pooling method: {config.temporal_pooling}.')
+            if not config.classifier_hidden:
+                self.classifier = nn.Linear(output_size, config.num_labels)
+            else:
+                if not config.classifier_hidden_size:
+                    config.classifier_hidden_size = (output_size + config.num_labels) // 2
+                if config.classifier_hidden_activation_function:
+                    if config.classifier_hidden_activation_function == 'relu':
+                        activation_function = nn.ReLU()
+                    else:
+                        raise ValueError(f"Unknown classifier hidden activation function: {config.classifier_hidden_activation_function}.")
+                    self.classifier = nn.Sequential(
+                        nn.Linear(output_size, config.classifier_hidden_size),
+                        activation_function,
+                        nn.Linear(config.classifier_hidden_size, config.num_labels),
+                    )
+                else:
+                    self.classifier = nn.Sequential(
+                        nn.Linear(output_size, config.classifier_hidden_size),
+                        nn.Linear(config.classifier_hidden_size, config.num_labels),
+                    )
+        self.config = config
+        self.post_init()
+
+    def forward(
+        self,
+        input_values: torch.Tensor, # (batch, num_frames, n_formants) — pre-extracted
+        attention_mask: torch.Tensor | None = None,
+        return_dict: bool | None = None,
+        labels: torch.Tensor | None = None,
+        **kwargs,
+    ) -> tuple | CausalLMOutput:
+        return_dict = return_dict if return_dict is not None else self.config.return_dict
+        hidden_states = input_values.float()
+
+        if self.config.transform_hidden_outputs:
+            hidden_states = self.transformer(hidden_states)
+
+        logits = hidden_states
+        if self.config.ctc_head:
+            logits = self.dropout(logits)
+            logits = self.lm_head(logits)
+            if self.config.l2_head:
+                logits = self.l2_head(logits)
+
+        if self.config.classifier_head:
+            if self.config.temporal_pooling == 'max':
+                logits = self.max_pooling(logits.transpose(1, 2)).flatten(1)
+            elif self.config.temporal_pooling == 'mean':
+                if self.config.ctc_head and self.config.append_hidden_outputs:
+                    logits = torch.cat(
+                        [self.mean_pooling(logits.transpose(1, 2)).flatten(1),
+                         self.mean_pooling(hidden_states.transpose(1, 2)).flatten(1)],
+                        dim=-1
+                    )
+                else:
+                    logits = self.mean_pooling(logits.transpose(1, 2)).flatten(1)
+            logits = self.classifier(logits)
+
+        loss = None
+        if labels is not None:
+            if self.config.problem_type is None:
+                if self.config.num_labels == 1:
+                    self.config.problem_type = "regression"
+                elif self.config.num_labels > 1 and labels.dtype in (torch.long, torch.int):
+                    self.config.problem_type = "single_label_classification"
+                else:
+                    self.config.problem_type = "multi_label_classification"
+            if self.config.problem_type == "regression":
+                loss_fn = nn.MSELoss()
+            elif self.config.problem_type == "single_label_classification":
+                loss_fn = nn.CrossEntropyLoss()
+            elif self.config.problem_type == "multi_label_classification":
+                loss_fn = nn.BCEWithLogitsLoss()
+            loss = loss_fn(logits, labels)
+
+        if not return_dict:
+            return ((loss, logits) if loss is not None else (logits,))
+        return CausalLMOutput(loss=loss, logits=logits)
+
+class FormantFeatureExtractor(SequenceFeatureExtractor):
+    """
+    Extracts formants from an Audio feature.
+    
+    Args:
+        sampling_rate (`int`, *optional*, defaults to 16000):
+            The sampling rate of the input audio.
+        feature_size (`int`, *optional*, defaults to 5):
+            The number of formants to keep. Always keeps the smallest
+            formants. Must be less than `order // 2`.
+        win_length (`int`, *optional*, defaults to 400):
+            The length in samples of the sliding window over which
+            formant values are calculated.
+        hop_length (`int`, *optional*, defaults to `win_length // 2`):
+            The number of samples between windows.
+        order (`int`, *optional*, defaults to `sampling_rate // 1000`):
+            The number of linear prediction coefficients. Should be at least
+            twice the number of formants you are calculating.
+        padding_value (`int`, *optional*, defaults to 0):
+            The value to pad the sequence with.
+    """
+
+    def __init__(
+        self,
+        sampling_rate: int = 16000,
+        feature_size: int = 5,
+        win_length: int = 400,
+        hop_length: int | None = None,
+        order: int | None = None,
+        padding_value: int = 0,
+        **kwargs,
+    ):
+        super().__init__(sampling_rate = sampling_rate, feature_size = feature_size, padding_value = padding_value, **kwargs)
+        self.win_length = win_length
+        self.hop_length = hop_length or self.win_length // 2
+        self.order = order or self.sampling_rate // 1000
+        if self.feature_size > self.order // 2:
+            raise ValueError(f"Feature size {self.feature_size} is more than half of order {self.order}!")
+
+    def _extract_formants(self, audio: np.ndarray) -> np.ndarray:
+        """Extract formant frequencies frame-by-frame using LPC analysis.
+        
+        Returns array of shape (num_frames, feature_size) with formant
+        frequencies in Hz, sorted ascending. Frames with fewer than
+        `feature_size` stable formants are zero-padded.
+        """
+
+        frames = librosa.util.frame(
+            audio, frame_length=self.win_length, hop_length=self.hop_length
+        ).T  # (num_frames, win_length)
+        window = np.hanning(self.win_length)
+        result = []
+        for frame in frames:
+            lpc_coeffs = librosa.lpc(frame * window, order=self.order)
+            roots = np.roots(lpc_coeffs)
+            # take one of each conjugate pair; keep stable roots with positive angle
+            roots = roots[np.imag(roots) >= 0]
+            angles = np.angle(roots)
+            mask = (np.abs(roots) < 1.0) & (angles > 0)
+            freqs = np.sort(angles[mask] * self.sampling_rate / (2 * np.pi))
+            row = np.zeros(self.feature_size, dtype=np.float32)
+            row[:min(len(freqs), self.feature_size)] = freqs[:self.feature_size]
+            result.append(row)
+        return np.array(result, dtype=np.float32)
+
+    def __call__(
+        self,
+        raw_speech: Union[np.ndarray, List[float], List[np.ndarray], List[List[float]]],
+        padding: Union[bool, str] = False,
+        return_tensors: Optional[str] = None,
+        sampling_rate: Optional[int] = None,
+        **kwargs,
+    ) -> BatchFeature:
+        if sampling_rate is not None and sampling_rate != self.sampling_rate:
+            raise ValueError(
+                f"Sampling rate mismatch: expected {self.sampling_rate}, got {sampling_rate}."
+            )
+
+        is_batched = isinstance(raw_speech, (list, tuple)) and isinstance(
+            raw_speech[0], (np.ndarray, list, tuple)
+        )
+        speeches = raw_speech if is_batched else [raw_speech]
+
+        features = [
+            self._extract_formants(np.asarray(s, dtype=np.float32)) for s in speeches
+        ]
+
+        # pad to longest sequence in batch
+        max_len = max(f.shape[0] for f in features)
+        input_values = np.zeros((len(features), max_len, self.feature_size), dtype=np.float32)
+        attention_mask = np.zeros((len(features), max_len), dtype=np.int64)
+        for i, f in enumerate(features):
+            input_values[i, :f.shape[0]] = f
+            attention_mask[i, :f.shape[0]] = 1
+
+        batch = BatchFeature({"input_values": input_values, "attention_mask": attention_mask})
+        if return_tensors is not None:
+            batch = batch.convert_to_tensors(return_tensors)
+        return batch
+    
 @dataclass
 class DataCollatorCTCWithPadding: # from https://huggingface.co/blog/fine-tune-wav2vec2-english
     """
     Data collator that will dynamically pad the inputs received.
+
     Args:
         processor (:class:`~transformers.Wav2Vec2Processor`)
             The processor used for proccessing the data.
@@ -628,4 +865,18 @@ class DataCollatorWithPaddingForClassification(DataCollatorWithPadding):
         batch = super().__call__(features)
         if 'labels' in batch.keys():
             batch['labels'] = batch['labels'].long()
+        return batch
+
+@dataclass
+class DataCollatorFormantWithPadding:
+    """Extracts and pads formant features from raw waveforms."""
+
+    extractor: FormantFeatureExtractor
+
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        raw = [np.asarray(f['input_values'], dtype=np.float32) for f in features]
+        labels = [f['labels'] for f in features] if 'labels' in features[0] else None
+        batch = dict(self.extractor(raw, return_tensors='pt'))
+        if labels is not None:
+            batch['labels'] = torch.tensor(labels).long()
         return batch
