@@ -142,7 +142,7 @@ trainer = Trainer(
     processing_class=feature_extractor, # type: ignore # feature_extractor exists
     data_collator=data_collator,
     callbacks=[EarlyStoppingCallback(early_stopping_patience=int(training_args.warmup_steps / training_args.eval_steps), early_stopping_threshold=0.001)], # never stop during warmup
-    preprocess_logits_for_metrics=lambda logits, labels: (logits[0] if isinstance(logits, tuple) else logits).cpu().numpy().argmax(axis=-1),
+    preprocess_logits_for_metrics=lambda logits, labels: (logits[0] if isinstance(logits, tuple) else logits).argmax(dim=-1),
 )
 
 trainer.train()
