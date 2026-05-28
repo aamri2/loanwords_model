@@ -3,13 +3,14 @@ import datasets
 from test_dataset_handler import t
 from torchaudio.transforms import MFCC
 from transformers import Wav2Vec2Model, Wav2Vec2FeatureExtractor
-from model_architecture import DataCollatorWithPaddingForClassification
+from model_architecture import DataCollatorWithPaddingForClassification, FormantFeatureExtractor
 from probabilities_handler import world_vowel_sort
 import pandas as pd
 import numpy as np
 
 feature_extractor = Wav2Vec2FeatureExtractor()
 data_collator = DataCollatorWithPaddingForClassification(feature_extractor)
+formant_extractor = FormantFeatureExtractor()
 def mfcc_processor(input_values):
     return MFCC()(input_values).mean(-1) # averages across time
 
@@ -17,7 +18,7 @@ def w2v2_processor(input_values, model):
     with torch.no_grad():
         return torch.stack(model(input_values.unsqueeze(0), output_hidden_states=True)[2], dim=1).squeeze(0).mean((0, 1)) # averages across layers and time
 
-representations = ['mfcc', 'w2v2-nat']
+representations = ['mfcc', 'w2v2-nat', 'formant']
 languages = ['EN', 'FR']
 domains = ['native', 'nonnative']
 
@@ -31,6 +32,9 @@ for language in languages:
             base_model = 'w2v2-large' if language == 'EN' else f'w2v2{language.lower()}-large'
             model = Wav2Vec2Model.from_pretrained(f'../{base_model}')
             feature_processor = lambda x: w2v2_processor(x, model)
+        elif representation == 'formant':
+            base_model = 'formant'
+            feature_processor = lambda x: formant_extractor(x)['input_values'].squeeze(0).mean(0) # average across time
         test_ds = test_ds.map(lambda batch: {'feature_vector': feature_processor(batch['input_values'])})
         test_feature_vector_norm = test_ds['feature_vector'] / test_ds['feature_vector'].norm(dim=0, keepdim=True)
         for domain in domains:
@@ -53,4 +57,4 @@ for language in languages:
                 p = p_ds.to_pandas()
                 p = p.melt(id_vars = ['language', 'vowel', 'file'], value_vars = train_ds.features['label'].names, var_name = 'classification', value_name = 'probabilities')
                 p = world_vowel_sort(p)
-                p.to_csv(f'probabilities/experiment_1/p_{base_model}_knn_{dataset_name}_cross_{fold}_wv.csv')
+                p.to_csv(f'probabilities/experiment_1/p_{base_model}_knn_2_{dataset_name}_cross_{fold}_wv.csv')
