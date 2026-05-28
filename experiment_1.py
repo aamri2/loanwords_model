@@ -67,6 +67,12 @@ elif (task // 40) % 2 == 1:
     base_dataset = 'wvFR'
     language = 'FR'
 
+dataset = datasets.load_from_disk(f'../prep_{base_dataset}{dataset_var}')
+model_config |= {
+    'id2label': {i: v for i, v in enumerate(dataset['train_0'].features['label'].names)},
+    'label2id': {v: i for i, v in enumerate(dataset['train_0'].features['label'].names)},
+}
+
 if (task // 80) % 5 < 4:
     feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
     data_collator = DataCollatorWithPaddingForClassification(feature_extractor)
@@ -92,14 +98,10 @@ elif (task // 80) % 5 == 4:
     data_collator = DataCollatorFormantWithPadding(feature_extractor)
     base_model_type = 'formant'
     base_model = 'formant'
-    model_config |= {'n_formants': feature_extractor.feature_size}
+    model_config |= {'n_formants': feature_extractor.feature_size, 'classifier_hidden_size': len(dataset['train_0'].features['label'].names)}
     model_init_fn = lambda *args, **kwargs: FormantLoanwordsModel(FormantLoanwordsConfig(*args, **kwargs))
 
-dataset = datasets.load_from_disk(f'../prep_{base_dataset}{dataset_var}')
-model_config |= {
-    'id2label': {i: v for i, v in enumerate(dataset['train_0'].features['label'].names)},
-    'label2id': {v: i for i, v in enumerate(dataset['train_0'].features['label'].names)},
-}
+
 fold = task % 10
 os.environ['TENSORBOARD_LOGGING_DIR'] = os.path.expanduser(f'~/scratch/experiment_1_tensorboard/{language}/{base_model_type}/{domain}/{model_name}/cross_{fold}')
 
