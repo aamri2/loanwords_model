@@ -321,7 +321,7 @@ class SpecComplex(Spec[Sequence[Spec | Sequence[Spec] | None]]):
                     value[value_name] = subvalue[0]
             return cls(value = None, **value) # typing complains if value not specified
 
-class BaseSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr', 'mfcc', 'w2v2-large', 'w2v2fr-large', 'w2v2ml-large-10', 'w2v2ml-large-100']):
+class BaseSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr', 'mfcc', 'w2v2-large', 'w2v2fr-large', 'w2v2ml-large-10', 'w2v2ml-large-100', 'formant']):
     """Specification unit for base models."""
 
     @property
@@ -330,10 +330,12 @@ class BaseSpec(SpecUnit, name = 'base', allowed_values = ['w2v2', 'w2v2fr', 'mfc
             return 'Wav2Vec2'
         elif self.value == 'mfcc':
             return 'MFCC'
+        elif self.value == 'formant':
+            return 'formant'
         else:
             raise NotImplementedError(f'Architecture for base model {self.value} unspecified.')
 
-class LayerSpec(SpecUnit, name = 'layer', allowed_values = ['max', 'relu', 'class', 'transformer', 'ctc', 'mean']):
+class LayerSpec(SpecUnit, name = 'layer', allowed_values = ['max', 'relu', 'class', 'transformer', 'ctc', 'mean', 'knn']):
     """Specification unit for layer types."""
 
 class NaturalNumbers(Container):
@@ -458,7 +460,7 @@ class ModelSpec(SpecComplex, name = 'model', value_types = [BaseSpec, TrainingSp
     def needs_pooling(self) -> bool:
         """Does the specified model need pooling?"""
 
-        return self.output_layer.value != 'class'
+        return self.output_layer.value not in ['class', 'knn']
 
     @property
     def layers(self) -> tuple[BaseSpec, *tuple[LayerSpec, ...]]:

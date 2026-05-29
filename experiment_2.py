@@ -54,7 +54,7 @@ model_config |= {
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 data_collator = DataCollatorWithPaddingForClassification(feature_extractor)
 
-os.environ['TENSORBOARD_LOGGING_DIR'] = os.path.expanduser(f'~/scratch/experiment_2_tensorboard/{language}/{model_name}{f"/cross_{fold}" if fold else ""}')
+os.environ['TENSORBOARD_LOGGING_DIR'] = os.path.expanduser(f'~/scratch/experiment_2_tensorboard/{language}/{model_name}{f"/cross_{fold}" if fold is not None else ""}')
 
 accuracy_metric = evaluate.load('../metrics/accuracy')
 
@@ -78,7 +78,7 @@ training_args = TrainingArguments(
     weight_decay=0.005,
     warmup_steps=0.25,
     push_to_hub=False,
-    output_dir=os.path.expanduser(f'~/scratch/trainer_output_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold else ""}'),
+    output_dir=os.path.expanduser(f'~/scratch/trainer_output_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}'),
     report_to='tensorboard',
     train_sampling_strategy='group_by_length',
     metric_for_best_model='eval_loss',
@@ -98,8 +98,8 @@ trainer = Trainer(
 )
 
 trainer.train()
-trainer.save_model(f'm_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold else ""}')
-print(f'Saved model m_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold else ""}.')
+trainer.save_model(f'm_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}')
+print(f'Saved model m_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}.')
 del trainer
 del model
 del train_dataset
