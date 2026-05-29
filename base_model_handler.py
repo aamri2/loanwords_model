@@ -2,6 +2,7 @@ from typing import Callable
 from spec import BaseSpec
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers import Wav2Vec2PhonemeCTCTokenizer, Wav2Vec2FeatureExtractor
+from model_architecture import FormantFeatureExtractor
 
 _BASE_PATH = '../'
 
@@ -26,7 +27,9 @@ class Base():
         
     @property
     def feature_extractor(self):
-        if self.spec.architecture == 'Wav2Vec2':
+        if self.spec.architecture in ['Wav2Vec2', 'MFCC']:
             return Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+        elif self.spec.architecture == 'formant':
+            return FormantFeatureExtractor(sampling_rate=16000, feature_size=5)
         else:
             raise NotImplementedError(f"Feature extractor class unknown for architecture {self.spec.architecture}.")

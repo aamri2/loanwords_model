@@ -53,6 +53,8 @@ class Model():
             return Wav2Vec2LoanwordsModel
         elif spec.base.architecture == 'MFCC':
             return MFCCLoanwordsModel
+        elif spec.base.architecture == 'formant':
+            return FormantLoanwordsModel
         else:
             raise NotImplementedError(f"Unknown model architecture {spec.base.architecture}!")
 
@@ -71,18 +73,6 @@ class Model():
         except FileNotFoundError:
             vocab = self.model.config.label2id
         return vocab
-    
-    def add_layer(self, layer_spec: str | LayerSpec | tuple[LayerSpec, ...]) -> PreTrainedModel:
-        """
-        Given a new layer, loads and returns a model with the layer added.
-        """
-
-        if isinstance(layer_spec, tuple):
-            layer_spec = _SEPARATOR.join(str(layer_spec_i) for layer_spec_i in layer_spec)
-        
-        new_spec = f'{self.spec}{_SEPARATOR}{layer_spec}'
-        model_class = self.get_model_class(ModelSpec(new_spec))
-        return model_class.from_pretrained(self.path)
 
     def as_map(self) -> Callable:
         """Returns a map function that adds logits to a dataset with an 'audio' column."""
@@ -175,36 +165,24 @@ def centre_probabilities(batch):
     batch['probabilities'] = torch.nn.functional.softmax(centre_logits, dim=-1)[0][:63] # remove <pad>
     return batch
 
-def probabilities(model, dataset: Dataset, id2label = None, **kwargs):
+def probabilities(model: Wav2Vec2LoanwordsModel | MFCCLoanwordsModel | FormantLoanwordsModel, dataset: Dataset, feature_extractor: Wav2Vec2FeatureExtractor | FormantFeatureExtractor, **kwargs):
     """Create DataFrame in long format containing classification probabilities"""
     
     column_names = [column_name for column_name in dataset.column_names if column_name != 'input_values']
 
     data = {
         'probabilities': [],
-        'classification': [],
-        **{column_name: [] for column_name in column_names}
-    }
-    if not id2label:
-        id2label = model.config.id2label if model.config.id2label else {}
+        'classification': [v for k, v in sorted(model.config.id2label.items())] * len(dataset),
+        **{column_name: sum(([row] * model.config.num_labels for row in dataset[column_name]), start = []) for column_name in column_names}
+    }   
 
     for row in tqdm(dataset.to_iterable_dataset(), total=len(dataset), desc="Running model"):
         with torch.no_grad():
-            input_values = torch.tensor(row['input_values']).unsqueeze(0)
+            input_values = feature_extractor(row['input_values'], sampling_rate=16000, return_tensors='pt')['input_values']
             logits = model(input_values, **kwargs)['logits'].cpu().detach()[0]
 
-        if id2label:
-            logits_to_keep = []
-            for id in id2label.keys(): # allows for selecting certain classifications only
-                logits_to_keep.append(logits[id])
-            probabilities = torch.nn.functional.softmax(torch.Tensor(logits_to_keep), dim=-1)
-            data['classification'].extend(id2label.values())
-        else:
-            probabilities = torch.nn.functional.softmax(logits, dim=-1)
-        
+        probabilities = torch.nn.functional.softmax(logits, dim=-1)
         data['probabilities'].extend(probabilities)
-        for column_name in column_names:
-            data[column_name].extend([row[column_name]] * len(probabilities))
     
     return pandas.DataFrame(data).astype({'probabilities': float})
 

@@ -1,5 +1,6 @@
 from model_handler import Model
 from model_handler import probabilities as legacy_probabilities
+from base_model_handler import Base
 from spec import ProbabilitySpec, HumanProbabilitySpec, _SEPARATOR
 from datasets import Dataset
 from test_dataset_handler import t, TestDataset
@@ -83,7 +84,7 @@ class Probabilities():
             if 'max' in str(self.spec) or 'mean' in str(self.spec):
                 model = Model(self.spec.model, **model_kwargs)
                 label2id = model.vocab
-                probabilities = legacy_probabilities(model.model, self.test_dataset.dataset, id2label = {v: k for k, v in label2id.items()})
+                probabilities = legacy_probabilities(model.model, self.test_dataset.dataset, feature_extractor=Base(model.spec.base).feature_extractor, id2label = {v: k for k, v in label2id.items()})
             else:
                 raise NotImplementedError("Cannot dynamically generate probabilities yet.")
         
@@ -164,7 +165,9 @@ class HumanProbabilities(Probabilities):
         self.test_dataset = TestDataset(self.spec.test_dataset)
         self.probabilities = self.load_probabilities()
 
-    def pool(self, *args: str, training=None, **kwargs: str | Iterable[str]) -> pd.DataFrame:
+    def pool(self, *args: str, **kwargs: str | Iterable[str]) -> pd.DataFrame:
         """Ignore column 'training'."""
 
+        if 'training' in kwargs:
+            kwargs.pop('training')
         return super().pool(*args, **kwargs)
