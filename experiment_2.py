@@ -1,12 +1,13 @@
 import datasets
-from transformers import Wav2Vec2FeatureExtractor, EarlyStoppingCallback
+from transformers import Wav2Vec2FeatureExtractor, EarlyStoppingCallback, Wav2Vec2PhonemeCTCTokenizer, Wav2Vec2Processor
 from transformers.trainer import Trainer
 from transformers.training_args import TrainingArguments
 import evaluate
-from model_architecture import Wav2Vec2LoanwordsModel, DataCollatorWithPaddingForClassification
+from model_architecture import Wav2Vec2LoanwordsModel, DataCollatorWithPaddingForClassification, DataCollatorCTCWithPadding
 import torch
 import os
 import sys
+import json
 
 task = int(sys.argv[1]) # from slurm array task id
 # tasks:
@@ -19,8 +20,16 @@ task = int(sys.argv[1]) # from slurm array task id
 # EN CTC # TODO
 # FR CTC # TODO
 
+feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+
 if task < 22: # classifier
     model_config = {'classifier_head': True, 'classifier_hidden': True, 'classifier_hidden_activation_function': 'relu', 'temporal_pooling': 'max', 'max_pooling_windows': 7}
+    processor = feature_extractor
+    data_collator = DataCollatorWithPaddingForClassification(feature_extractor)
+    id2label_getter = lambda dataset: {i: v for i, v in enumerate(dataset[train_split].features['label'].names)}
+    label2id_getter = lambda dataset: {v: i for i, v in enumerate(dataset[train_split].features['label'].names)}
+    metric = evaluate.load('../metrics/accuracy')
+    get_predictions = lambda pred: {'predictions': pred.predictions, 'references': pred.label_ids}
 
     if task // 11 == 0: # EN
         language = 'EN'
@@ -43,26 +52,51 @@ if task < 22: # classifier
         train_split = 'train'
         eval_split = 'test'
         dataset_name = pseudosylls_dataset_name
+    model_training = f'mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}'
+
+elif task in [22, 23]: # ASR
+    model_config = {'ctc_head': True, 'ctc_loss_reduction': 'mean'}
+    model_name = 'ASR'
+    train_split = 'train'
+    eval_split = 'test'
+    
+    if task == 22:
+        language = 'EN'
+        dataset_name = 'timit'
+    elif task == 23:
+        language = 'FR'
+        dataset_name = 'bl'
+    
+    tokenizer = Wav2Vec2PhonemeCTCTokenizer(f'../prep_{dataset_name}/vocab.json', do_phonemize=False)
+    processor = Wav2Vec2Processor(feature_extractor, tokenizer)
+    data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
+    label2id = tokenizer.get_vocab()
+    label2id_getter = lambda x: label2id
+    id2label_getter = lambda x: {v: k for k, v in label2id.items()}
+    metric = evaluate.load('../metrics/cer')
+    def get_predictions(pred):
+        pred.label_ids[pred.label_ids == -100] = tokenizer.pad_token_id
+        return {'predictions': processor.batch_decode(pred.predictions), 'references': processor.batch_decode(pred.label_ids, group_tokens = False)}
+    model_config |= {'vocab_size': tokenizer.vocab_size}
+    model_training = f'ctc_1_{dataset_name}'
 
 model_config |= {'pretrained_model_name_or_path': f'../{base_model}', 'use_weighted_layer_sum': True}
 dataset = datasets.load_from_disk(f'../prep_{dataset_name}')
 model_config |= {
-    'id2label': {i: v for i, v in enumerate(dataset[train_split].features['label'].names)},
-    'label2id': {v: i for i, v in enumerate(dataset[train_split].features['label'].names)},
+    'id2label': id2label_getter(dataset),
+    'label2id': label2id_getter(dataset),
 }
-
-feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
-data_collator = DataCollatorWithPaddingForClassification(feature_extractor)
 
 os.environ['TENSORBOARD_LOGGING_DIR'] = os.path.expanduser(f'~/scratch/experiment_2_tensorboard/{language}/{model_name}{f"/cross_{fold}" if fold is not None else ""}')
 
-accuracy_metric = evaluate.load('../metrics/accuracy')
-
 def compute_metrics(pred):
-    return accuracy_metric.compute(predictions=pred.predictions, references=pred.label_ids)
+    return metric.compute(**get_predictions(pred))
 
-model = model_init_fn = Wav2Vec2LoanwordsModel.from_pretrained(**model_config)
-model.freeze_base_model()
+model = Wav2Vec2LoanwordsModel.from_pretrained(**model_config)
+if model.config.ctc_head:
+    model.freeze_feature_encoder()
+else:
+    model.freeze_base_model()
 
 train_dataset = dataset[train_split]
 test_dataset = dataset[eval_split]
@@ -78,7 +112,7 @@ training_args = TrainingArguments(
     weight_decay=0.005,
     warmup_steps=0.25,
     push_to_hub=False,
-    output_dir=os.path.expanduser(f'~/scratch/trainer_output_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}'),
+    output_dir=os.path.expanduser(f'~/scratch/trainer_output_{base_model}_{model_training}'),
     report_to='tensorboard',
     train_sampling_strategy='group_by_length',
     metric_for_best_model='eval_loss',
@@ -91,15 +125,15 @@ trainer = Trainer(
     compute_metrics=compute_metrics,
     train_dataset=train_dataset,
     eval_dataset=test_dataset,
-    processing_class=feature_extractor, # type: ignore # feature_extractor exists
+    processing_class=feature_extractor,
     data_collator=data_collator,
     callbacks=[EarlyStoppingCallback(early_stopping_patience=int(training_args.warmup_steps / training_args.eval_steps), early_stopping_threshold=0.001)], # never stop during warmup
     preprocess_logits_for_metrics=lambda logits, labels: (logits[0] if isinstance(logits, tuple) else logits).argmax(dim=-1),
 )
 
 trainer.train()
-trainer.save_model(f'm_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}')
-print(f'Saved model m_{base_model}_mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}.')
+trainer.save_model(f'm_{base_model}_{model_training}')
+print(f'Saved model m_{base_model}_{model_training}.')
 del trainer
 del model
 del train_dataset
