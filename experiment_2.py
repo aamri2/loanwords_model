@@ -63,9 +63,11 @@ elif task in [22, 23]: # ASR
     if task == 22:
         language = 'EN'
         dataset_name = 'timit'
+        base_model = 'w2v2-large'
     elif task == 23:
         language = 'FR'
         dataset_name = 'bl'
+        base_model = 'w2v2fr-large'
     
     tokenizer = Wav2Vec2PhonemeCTCTokenizer(f'../prep_{dataset_name}/vocab.json', do_phonemize=False)
     processor = Wav2Vec2Processor(feature_extractor, tokenizer)
