@@ -1,13 +1,12 @@
+import torch
 import datasets
 from transformers import Wav2Vec2FeatureExtractor, EarlyStoppingCallback, Wav2Vec2PhonemeCTCTokenizer, Wav2Vec2Processor
 from transformers.trainer import Trainer
 from transformers.training_args import TrainingArguments
 import evaluate
 from model_architecture import Wav2Vec2LoanwordsModel, DataCollatorWithPaddingForClassification, DataCollatorCTCWithPadding
-import torch
 import os
 import sys
-import json
 
 task = int(sys.argv[1]) # from slurm array task id
 # tasks:
@@ -17,8 +16,8 @@ task = int(sys.argv[1]) # from slurm array task id
 # [FR neural-mean gold] x 10
 # [FR neural-mean psuedosylls]
 # CTC
-# EN CTC # TODO
-# FR CTC # TODO
+# EN CTC
+# FR CTC
 
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 
@@ -75,10 +74,15 @@ elif task in [22, 23]: # ASR
     label2id = tokenizer.get_vocab()
     label2id_getter = lambda x: label2id
     id2label_getter = lambda x: {v: k for k, v in label2id.items()}
-    metric = evaluate.load('../metrics/cer')
+    class Metric:
+        _metric = evaluate.load('../metrics/cer')
+        def compute(self, **kwargs):
+            return {'per': self._metric.compute(**kwargs)}
+    metric = Metric()
     def get_predictions(pred):
-        pred.label_ids[pred.label_ids == -100] = tokenizer.pad_token_id
-        return {'predictions': processor.batch_decode(pred.predictions), 'references': processor.batch_decode(pred.label_ids, group_tokens = False)}
+        label_ids = pred.label_ids
+        label_ids[label_ids == -100] = tokenizer.pad_token_id
+        return {'predictions': processor.batch_decode(pred.predictions), 'references': processor.batch_decode(label_ids, group_tokens = False)}
     model_config |= {'vocab_size': tokenizer.vocab_size}
     model_training = f'ctc_1_{dataset_name}'
     fold = None
