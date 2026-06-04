@@ -13,15 +13,18 @@ from transformers.data.data_collator import DataCollatorWithPadding
 from transformers.modeling_utils import PreTrainedModel
 from transformers import Wav2Vec2Config
 from typing import Dict, List, Optional, Union, Any, cast, Literal
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from torchaudio.transforms import MFCC, MelScale, Spectrogram
 import os
 import safetensors.torch
 import numpy as np
 import librosa
+from huggingface_hub.dataclasses import strict
 
 _HIDDEN_STATES_START_POSITION = 2
 
+@strict(accept_kwargs=True)
+@dataclass
 class LoanwordsConfig(PretrainedConfig):
     """
     Base class for loanwords project configurations.
@@ -70,60 +73,50 @@ class LoanwordsConfig(PretrainedConfig):
             An activation function to use in the hidden classifier layer.
     """
 
-    def __init__(
-        self,
-        *,
-        transform_hidden_outputs: bool = False,
-        ctc_head: bool = False,
-        l2_head: bool = False,
-        l2_vocab_size: int = 32,
-        append_hidden_outputs: bool = False,
-        temporal_pooling: str | None = None,
-        max_pooling_windows: int = 1,
-        preclassifier_activation_function: str | None = None,
-        classifier_head: bool = False,
-        classifier_hidden: bool = False,
-        classifier_hidden_size: int | None = None,
-        classifier_hidden_activation_function: str | None = None,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-        self.transform_hidden_outputs = transform_hidden_outputs
-        self.ctc_head = ctc_head
-        self.l2_head = l2_head
+    transform_hidden_outputs: bool = False
+    ctc_head: bool = False
+    l2_head: bool = False
+    l2_vocab_size: int = 32
+    append_hidden_outputs: bool = False
+    temporal_pooling: Literal['max', 'mean'] | None = None
+    max_pooling_windows: int = 1
+    preclassifier_activation_function: Literal['relu'] | None = None
+    classifier_head: bool = False
+    classifier_hidden: bool = False
+    classifier_hidden_size: int | None = None
+    classifier_hidden_activation_function: Literal['relu'] | None = None
+    problem_type: Literal['regression', 'single_label_classification', 'multi_label_classification', 'ctc'] | None = None
+
+    def validate_l2_head(self):
         if self.l2_head and not self.ctc_head:
             raise ValueError("Invalid configuration. l2_head cannot be True unless ctc_head is True.")
-        self.l2_vocab_size = l2_vocab_size
         if self.l2_head and not self.l2_vocab_size:
             raise ValueError("If l2_head is True, l2_vocab_size must be specified.")
-        self.append_hidden_outputs = append_hidden_outputs
-        self.temporal_pooling = temporal_pooling
-        if self.temporal_pooling and not self.temporal_pooling in ['max', 'mean']:
-            raise ValueError(f"Unrecognized temporal pooling: {self.temporal_pooling}.")
-        self.max_pooling_windows = max_pooling_windows
-        self.preclassifier_activation_function = preclassifier_activation_function
-        if self.preclassifier_activation_function and not self.preclassifier_activation_function in ['relu']:
-            raise ValueError(f"Unrecognized preclassifier activation function: {self.preclassifier_activation_function}.")
-        self.classifier_head = classifier_head
-        self.classifier_hidden = classifier_hidden
-        self.classifier_hidden_size = classifier_hidden_size
-        self.classifier_hidden_activation_function = classifier_hidden_activation_function
-        if self.classifier_hidden_activation_function and not self.classifier_hidden_activation_function in ['relu']:
-            raise ValueError(f"Unrecognized preclassifier activation function: {self.classifier_hidden_activation_function}.")        
 
+class LoanwordsModel(PreTrainedModel):
+    """
+    The base model type for the loanwords project. Lacks base layers, but has the heads.
+    
+    Excepts some featurized audio representation, and then
+    can add various heads to it.
+    """
+
+    config_class = LoanwordsConfig
+
+    def __init__(self, config: LoanwordsConfig):
+        super().__init__(config)
+
+@strict(accept_kwargs=True)
+@dataclass
 class Wav2Vec2LoanwordsConfig(Wav2Vec2Config, LoanwordsConfig):
-    problem_type: Literal['regression', 'single_label_classification', 'multi_label_classification', 'ctc'] | None
-
-    def __init__(self, **kwargs):
-        Wav2Vec2Config.__init__(self, **kwargs)
-        LoanwordsConfig.__init__(self, **kwargs)
+    problem_type: Literal['regression', 'single_label_classification', 'multi_label_classification', 'ctc'] | None = None
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, return_unused_kwargs = False, **kwargs):
         config, unused_kwargs = super().from_pretrained(pretrained_model_name_or_path, *args, return_unused_kwargs = True, **kwargs)
         return_kwargs = {}
         for kwarg in unused_kwargs.keys():
-            if kwarg in LoanwordsConfig():
+            if kwarg in asdict(LoanwordsConfig()).keys():
                 setattr(config, kwarg, unused_kwargs[kwarg])
             else:
                 return_kwargs[kwarg] = unused_kwargs[kwarg]
@@ -138,6 +131,7 @@ class Wav2Vec2LoanwordsModel(Wav2Vec2PreTrainedModel):
 
     def __init__(self, config: Wav2Vec2LoanwordsConfig):
         super().__init__(config)
+        self.config = config
         self.wav2vec2 = Wav2Vec2Model(config)
         output_size = config.output_hidden_size
     
@@ -845,14 +839,13 @@ class DataCollatorCTCWithPadding: # from https://huggingface.co/blog/fine-tune-w
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors="pt",
         )
-        with self.processor.as_target_processor():
-            labels_batch = self.processor.pad(
-                label_features,
-                padding=self.padding,
-                max_length=self.max_length_labels,
-                pad_to_multiple_of=self.pad_to_multiple_of_labels,
-                return_tensors="pt",
-            )
+        labels_batch = self.processor.pad(
+            labels=label_features,
+            padding=self.padding,
+            max_length=self.max_length_labels,
+            pad_to_multiple_of=self.pad_to_multiple_of_labels,
+            return_tensors="pt",
+        )
 
         # replace padding with -100 to ignore loss correctly
         labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
