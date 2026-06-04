@@ -81,6 +81,7 @@ elif task in [22, 23]: # ASR
         return {'predictions': processor.batch_decode(pred.predictions), 'references': processor.batch_decode(pred.label_ids, group_tokens = False)}
     model_config |= {'vocab_size': tokenizer.vocab_size}
     model_training = f'ctc_1_{dataset_name}'
+    fold = None
 
 model_config |= {'pretrained_model_name_or_path': f'../{base_model}', 'use_weighted_layer_sum': True}
 dataset = datasets.load_from_disk(f'../prep_{dataset_name}')
