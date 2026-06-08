@@ -12,6 +12,8 @@ from scipy import stats
 from matplotlib import pyplot as plt
 from typing import cast, Sequence, Any, Iterable
 from math import prod
+from ctc_decoder import decode_probabilities
+from pooling_handler import Pooling
 
 _PROBABILITIES_PATH = 'probabilities/'
 _PROBABILITIES_PREFIX = 'p'
@@ -85,6 +87,12 @@ class Probabilities():
                 model = Model(self.spec.model, **model_kwargs)
                 label2id = model.vocab
                 probabilities = legacy_probabilities(model.model, self.test_dataset.dataset, feature_extractor=Base(model.spec.base).feature_extractor, id2label = {v: k for k, v in label2id.items()})
+            elif 'ctc' in str(self.spec) and 'vowel' in str(self.spec):
+                model = Model(self.spec.model, **model_kwargs)
+                pooling = Pooling(self.spec.pooling)
+                logits = self.test_dataset.dataset.map(model.as_map(), desc="Running model", batched=True, batch_size=32).with_format('torch')
+                probabilities = cast(pd.DataFrame, logits.map(pooling.as_map(model), desc="Decoding logits", batched=True, batch_size=32, remove_columns=['logits', 'input_values']).to_pandas())
+                probabilities['classification'] = probabilities['classification'].map(TrainingDataset(model.spec.output_dataset).get_translator(self.test_dataset.spec))
             else:
                 raise NotImplementedError("Cannot dynamically generate probabilities yet.")
         

@@ -32,8 +32,8 @@ def compute_metrics(p: ProbabilitiesMap) -> pd.DataFrame:
     }
 
     for prob in tqdm(probs, desc='Computing metrics'):
-        data['model_var'].append(prob[:prob.find('_cross')]) # {...}_cross
-        data['model_cross'].append(int(prob[prob.find('cross_') + len('cross_')])) # cross_{X}
+        data['model_var'].append(prob[:prob.find('_cross') if 'cross' in prob else prob.find('_wv')]) # {...}_cross
+        data['model_cross'].append(int(prob[prob.find('cross_') + len('cross_')]) if 'cross' in prob else None) # cross_{X}
         if p[prob].spec.model.output_dataset.language:
             if p[prob].spec.model.last_training.training_dataset.language == 'EN': # default to EN
                 native = 'EN'
@@ -185,6 +185,11 @@ df1[[col for col in df1.columns if 'model' not in col]]\
     .style.highlight_min(subset=pd.IndexSlice[:, pd.IndexSlice[:'JS-nonnative', 'mean']]).highlight_max(subset=pd.IndexSlice[:, pd.IndexSlice['acc-native':, 'mean']])
 # %%
 p2 = ProbabilitiesMap(path='probabilities/experiment_2/')
-df2 = compute_metrics(p1)
-df2['type'] = df1['model_var'].apply(lambda x: 'gold' if 'wv' in x else 'pseudo-sylls' if 'EV' in x else 'ASR' if 'ctc' in x else None)
-df2['lang'] = df1['model_var'].apply(lambda x: 'EN' if 'w2v2-large' in x else 'FR' if 'w2v2fr-large' in x else None)
+df2 = compute_metrics(p2)
+# %%
+df2['type'] = df2['model_var'].apply(lambda x: 'gold' if 'wv' in x else 'pseudo-sylls' if 'EV' in x else 'ASR' if 'ctc' in x else None)
+df2['lang'] = df2['model_var'].apply(lambda x: 'EN' if 'w2v2-large' in x else 'FR' if 'w2v2fr-large' in x else None)
+df2[[col for col in df2.columns if 'model' not in col]]\
+    .groupby(['lang', 'type'])\
+    .agg(['mean', 'sem'])\
+    .style.highlight_min(subset=pd.IndexSlice[:, pd.IndexSlice[:'JS-nonnative', 'mean']]).highlight_max(subset=pd.IndexSlice[:, pd.IndexSlice['acc-native':, 'mean']])

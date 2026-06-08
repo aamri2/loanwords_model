@@ -1,10 +1,10 @@
 import torch
-from spec import TrainingDatasetSpec, _SEPARATOR
+from spec import TrainingDatasetSpec, _SEPARATOR, TestDatasetSpec
 from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict, load_from_disk
 import datasets
 import json
 import pandas as pd
-from typing import Sequence, overload, cast, Mapping
+from typing import Sequence, overload, cast, Mapping, Callable
 import phonemizer.separator
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2PhonemeCTCTokenizer
 import phonemizer
@@ -13,6 +13,8 @@ import numpy as np
 from torchaudio.functional import forced_align, merge_tokens
 from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, train_test_split
 from tqdm import tqdm
+from functools import cached_property
+from collections import defaultdict
 
 _DATASET_PATH = '../'
 _DATASET_PREFIX = 'prep'
@@ -25,21 +27,36 @@ class TrainingDataset():
     spec: TrainingDatasetSpec
     path: str
     dataset: Dataset | DatasetDict | IterableDataset | IterableDatasetDict
-    vocab: dict[str, int]
-    consonants: list[str]
-    vowels: list[str]
 
     def __init__(self, spec: str | TrainingDatasetSpec, path: str | None = None):
         self.spec = TrainingDatasetSpec(spec)
         self.path = path if path else f'{_DATASET_PATH}{_DATASET_PREFIX}{_SEPARATOR}{spec}'
         self.dataset = self.load_dataset()
-        # self.vocab = self.get_dataset_vocab() # TODO
-        # self.consonants = get_consonants(self.spec)
-        # self.vowels = get_vowels(self.spec)
     
     @property
     def vocab_path(self) -> str:
         return self.path + '/vocab.json'
+    
+    @cached_property
+    def label2id(self) -> dict[str, int]:
+        return self.get_dataset_vocab()
+    
+    @cached_property
+    def id2label(self) -> dict[int, str]:
+        return {v: k for k, v in self.label2id.items()}
+
+    @cached_property
+    def consonants(self) -> list[str]:
+        return get_consonants(self.spec)
+    
+    @cached_property
+    def vowels(self) -> list[str]:
+        return get_vowels(self.spec)
+    
+    def get_translator(self, other_spec: str | TrainingDatasetSpec | TestDatasetSpec) -> dict[str, str]:
+        """Returns a translator from the dataset into the transcription system of another."""
+
+        return translators[str(self.spec.family)][str(other_spec)]
 
     def load_dataset(self) -> Dataset | DatasetDict | IterableDataset | IterableDatasetDict:
         """Loads a dataset given its specification."""
@@ -112,6 +129,13 @@ class TrainingDatasetMap(Mapping):
     
 d = TrainingDatasetMap()
 
+
+class TranslationDict(dict):
+    """A dictionary that defaults to returning the key."""
+
+    def __missing__(self, key):
+        return key
+
 consonants = {
     'timit': ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh'],
     'librispeech': ["b", "d", "dʒ", "f", "h", "j", "k", "l", "m", "n", "p", "s", "t", "tʃ", "v", "w", "z", "ð", "ŋ", "ɡ", "ɹ", "ɾ", "ʃ", "ʒ", "θ"],
@@ -120,8 +144,19 @@ consonants = {
 }
 
 vowels = {
-    
+    'timit': ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ah', 'ow', 'uh', 'uw'],
+    'bl': ['i', 'y', 'e', 'E', 'deux', 'neuf', 'a', 'a~', 'o', 'O', 'o~', 'u', 'U~'],
 }
+
+translators = defaultdict(lambda: defaultdict(TranslationDict), {
+    'timit': defaultdict(TranslationDict, {
+        'wv': TranslationDict({'iy': 'i', 'ih': 'ɪ', 'ey': 'eɪ', 'eh': 'ɛ', 'ae': 'æ', 'aa': 'ɑ', 'ah': 'ʌ', 'ow': 'oʊ', 'uw': 'u', 'uh': 'ʊ'}),
+    }),
+    'bl': defaultdict(TranslationDict, {
+        'wv': TranslationDict({'i': 'i', 'y': 'y', 'e': 'e', 'E': '\u025b', 'deux': '\u00f8', 'neuf': '\u0153', 'a': 'a', 'a~': '\u0251\u0303', 'o': 'o', 'O': '\u0254', 'o~': '\u0254\u0303', 'u': 'u', 'U~': '\u025b\u0303'}),
+    }),
+})
+
 
 def get_consonants(spec: str | TrainingDatasetSpec) -> list[str]:
     """Given a specification, gets the consonants in the transcription system of the dataset."""

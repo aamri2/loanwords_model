@@ -72,7 +72,7 @@ def decode_probabilities(symbols: AnySymbols, symbol_of_interest: Optional[int],
 
     return Probabilities(probabilities, classifications)
 
-def get_symbols_lists(symbols: AnySymbols, symbol_of_interest: Optional[int]) -> list[AnySymbols]:
+def get_symbols_lists(symbols: AnySymbols, symbol_of_interest: int | None = None) -> list[AnySymbols]:
     """
     Convenience function to easily distinguish paths of interest.
 
@@ -94,9 +94,9 @@ def get_symbols_lists(symbols: AnySymbols, symbol_of_interest: Optional[int]) ->
     if symbol_of_interest is not None and (symbol_of_interest < 0 or symbol_of_interest > len(symbols)):
         raise ValueError(f'Symbol of interest {symbol_of_interest} not in range!')
     
-    symbols_of_interest = symbols[symbol_of_interest] if symbol_of_interest is not None else symbols
-    if not isinstance(symbols_of_interest, list):
-        raise ValueError(f'Symbol of interest {symbol_of_interest} not a list!')
+    symbols_of_interest = [symbols[symbol_of_interest]] if symbol_of_interest is not None else symbols
+    if not isinstance(symbols_of_interest[0], list):
+        raise ValueError(f'Symbol of interest {symbol_of_interest[0]} not a list!')
 
     if symbol_of_interest is not None:
         symbols_lists = [symbols[:symbol_of_interest] + symbol + symbols[symbol_of_interest + 1:] for symbol in _flatten_symbol(symbols_of_interest)]
@@ -120,7 +120,7 @@ def _flatten_symbol(symbols: Symbols) -> Symbols:
         if isinstance(symbol, list):
             flattened_symbols = [flattened_symbol + [i] for i in symbol for flattened_symbol in flattened_symbols]
         else:
-            flattened_symbols = [flattened_symbols + [symbol]]
+            flattened_symbols = [flattened_symbol + [symbol] for flattened_symbol in flattened_symbols]
 
     return flattened_symbols
 
