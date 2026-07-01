@@ -31,29 +31,29 @@ if task < 22 or task == 24: # classifier
     metric = evaluate.load('../metrics/accuracy')
     get_predictions = lambda pred: {'predictions': pred.predictions, 'references': pred.label_ids}
 
-    if task // 11 == 0: # EN
-        language = 'EN'
-        pseudosylls_dataset_name = 'timitEV'
-        base_model = 'w2v2-large'
-    elif task // 11 == 1: # FR
-        language = 'FR'
-        pseudosylls_dataset_name = 'blEV'
-        base_model = 'w2v2fr-large'
-    
-    if task % 11 < 10: # gold, 10-fold
-        model_name = 'gold'
-        fold = task % 11
-        train_split = f'train_{fold}'
-        eval_split = f'dev_{fold}'
-        dataset_name = f'wv{language}10Fold'
-    elif task % 11 == 10: # pseudosylls, no cross-val
-        model_name = 'pseudo-sylls'
-        fold = None
-        train_split = 'train'
-        eval_split = 'test'
-        dataset_name = pseudosylls_dataset_name
-
-    if task == 24: # intervocal consonants
+    if task != 24:
+        if task // 11 == 0: # EN
+            language = 'EN'
+            pseudosylls_dataset_name = 'timitEV'
+            base_model = 'w2v2-large'
+        elif task // 11 == 1: # FR
+            language = 'FR'
+            pseudosylls_dataset_name = 'blEV'
+            base_model = 'w2v2fr-large'
+        
+        if task % 11 < 10: # gold, 10-fold
+            model_name = 'gold'
+            fold = task % 11
+            train_split = f'train_{fold}'
+            eval_split = f'dev_{fold}'
+            dataset_name = f'wv{language}10Fold'
+        elif task % 11 == 10: # pseudosylls, no cross-val
+            model_name = 'pseudo-sylls'
+            fold = None
+            train_split = 'train'
+            eval_split = 'test'
+            dataset_name = pseudosylls_dataset_name
+    elif task == 24: # intervocal consonants
         language = 'EN'
         model_name = 'consonants'
         fold = None
