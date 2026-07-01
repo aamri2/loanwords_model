@@ -18,10 +18,11 @@ task = int(sys.argv[1]) # from slurm array task id
 # CTC
 # EN CTC
 # FR CTC
+# EN neural-mean pseudosylls
 
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 
-if task < 22: # classifier
+if task < 22 or task == 24: # classifier
     model_config = {'classifier_head': True, 'classifier_hidden': True, 'classifier_hidden_activation_function': 'relu', 'temporal_pooling': 'max', 'max_pooling_windows': 7}
     processor = feature_extractor
     data_collator = DataCollatorWithPaddingForClassification(feature_extractor)
@@ -51,6 +52,15 @@ if task < 22: # classifier
         train_split = 'train'
         eval_split = 'test'
         dataset_name = pseudosylls_dataset_name
+
+    if task == 24: # intervocal consonants
+        language = 'EN'
+        model_name = 'consonants'
+        fold = None
+        train_split = 'train'
+        eval_split = 'test'
+        dataset_name = 'timitEC'
+        base_model = 'w2v2-large'
     model_training = f'mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}'
 
 elif task in [22, 23]: # ASR
