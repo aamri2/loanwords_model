@@ -11,14 +11,14 @@ import sys
 task = int(sys.argv[1]) # from slurm array task id
 # tasks:
 # w2v2-nat:
-# [EN neural-mean gold] x 10
-# [EN neural-mean pseudosylls]
-# [FR neural-mean gold] x 10
-# [FR neural-mean psuedosylls]
+# [EN neural-max gold] x 10
+# [EN neural-max pseudosylls]
+# [FR neural-max gold] x 10
+# [FR neural-max psuedosylls]
 # CTC
 # EN CTC
 # FR CTC
-# EN neural-mean pseudosylls
+# EN neural-max intervocalic consonants
 
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 
@@ -61,7 +61,7 @@ if task < 22 or task == 24: # classifier
         eval_split = 'test'
         dataset_name = 'timitEC'
         base_model = 'w2v2-large'
-    model_training = f'mean_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}'
+    model_training = f'max_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}'
 
 elif task in [22, 23]: # ASR
     model_config = {'ctc_head': True, 'ctc_loss_reduction': 'mean'}
