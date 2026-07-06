@@ -21,6 +21,7 @@ task = int(sys.argv[1]) # from slurm array task id
 # EN neural-max intervocalic consonants
 
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
+max_steps = 100000
 
 if task < 22 or task == 24: # classifier
     model_config = {'classifier_head': True, 'classifier_hidden': True, 'classifier_hidden_activation_function': 'relu', 'temporal_pooling': 'max', 'max_pooling_windows': 7}
@@ -53,6 +54,7 @@ if task < 22 or task == 24: # classifier
             train_split = 'train'
             eval_split = 'test'
             dataset_name = pseudosylls_dataset_name
+            max_steps = 500000
     elif task == 24: # intervocal consonants
         language = 'EN'
         model_name = 'consonants'
@@ -120,7 +122,7 @@ test_dataset = dataset[eval_split]
 training_args = TrainingArguments(
     per_device_train_batch_size=32,
     eval_strategy='steps',
-    max_steps=100000,
+    max_steps=max_steps,
     bf16=True,
     save_steps=0.05,
     eval_steps=0.05,
