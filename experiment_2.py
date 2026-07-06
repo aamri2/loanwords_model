@@ -93,7 +93,7 @@ elif task in [22, 23]: # ASR
         label_ids = pred.label_ids
         label_ids[label_ids == -100] = tokenizer.pad_token_id
         return {'predictions': processor.batch_decode(pred.predictions), 'references': processor.batch_decode(label_ids, group_tokens = False)}
-    model_config |= {'vocab_size': tokenizer.vocab_size}
+    model_config |= {'vocab_size': tokenizer.vocab_size, 'pad_token_id': tokenizer.pad_token_id}
     model_training = f'ctc_1_{dataset_name}'
     fold = None
 
