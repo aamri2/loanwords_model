@@ -82,12 +82,12 @@ class Probabilities():
 
         try:
             probabilities = pd.read_csv(f'{self.path}{prefix}{_SEPARATOR}{self.spec}.csv')
-        except:
+        except FileNotFoundError:
             if 'max' in str(self.spec) or 'mean' in str(self.spec):
                 model = Model(self.spec.model, **model_kwargs)
                 label2id = model.vocab
                 probabilities = legacy_probabilities(model.model, self.test_dataset.dataset, feature_extractor=Base(model.spec.base).feature_extractor, id2label = {v: k for k, v in label2id.items()})
-            elif 'ctc' in str(self.spec) and 'vowel' in str(self.spec):
+            elif 'ctc' in str(self.spec) and 'vowel' in str(self.spec) or 'consonant' in str(self.spec):
                 model = Model(self.spec.model, **model_kwargs)
                 pooling = Pooling(self.spec.pooling)
                 logits = self.test_dataset.dataset.map(model.as_map(), desc="Running model", batched=True, batch_size=32).with_format('torch')
@@ -103,36 +103,13 @@ class Probabilities():
     def prepare_probabilities(self, probabilities: pd.DataFrame) -> pd.DataFrame:
         """Prepares probabilities from the file."""
 
-        probabilities = self._add_formants(probabilities)
-        probabilities = self._add_contexts(probabilities)
-        probabilities = world_vowel_sort(probabilities)
+        probabilities = sorting_fn[self.spec.test_dataset.value](probabilities)
         if isinstance(self.spec, ProbabilitySpec):
-            training_dataset = self.spec.model.training[-1].training_dataset if isinstance(self.spec.model.training, tuple) else self.spec.model.training.training_dataset
+            training_dataset = self.spec.model.output_dataset
             if training_dataset.family == self.spec.test_dataset.value:
                 probabilities = self._add_training(probabilities)
             else:
                 probabilities['training'] = 'no'
-        return probabilities
-    
-    def _add_formants(self, probabilities: pd.DataFrame) -> pd.DataFrame:
-        """
-        Returns probabilities with formant columns added.
-        
-        Adds columns F1, F2, F3, F1_norm, and F2_norm.
-        """
-
-        formants = self.test_dataset.formants
-        formants['F1_norm'] = formants['F1'] / formants['F3']
-        formants['F2_norm'] = formants['F2'] / formants['F3']
-
-        probabilities = probabilities.join(formants, on = 'file', validate = 'many_to_one')
-        return probabilities
-    
-    def _add_contexts(self, probabilities: pd.DataFrame) -> pd.DataFrame:
-        """Returns the probabilities with added columns prev_phone, next_phone"""
-
-        contexts = self.test_dataset.contexts
-        probabilities = probabilities.join(contexts, on = 'file', validate = 'many_to_one')
         return probabilities
 
     def _add_training(self, probabilities: pd.DataFrame) -> pd.DataFrame:
@@ -153,16 +130,31 @@ class Probabilities():
         return f'{self.__class__.__name__}({repr(str(self.spec))})'
 
 vowel_order = 'iɪyʏeɛøœaæɐɑʌoɔɤuʊɯ:ː\u0303'
+consonant_order = 'ptkbdɡhfθsʃvðzʒtʃdʒmnŋrljwy'
+
 def world_vowel_sort(data: pd.DataFrame):
     data = data.sort_values(
         by = 'classification',
-        key = lambda x: pd.Series([vowel_order.index(c) for c in s] for s in x),
+        key = lambda x: pd.Series([vowel_order.find(c) for c in s] for s in x),
     ).sort_values(by = 'file', kind = 'mergesort').sort_values(
         by = 'vowel',
-        key = lambda x: pd.Series([vowel_order.index(c) for c in s] for s in x),
+        key = lambda x: pd.Series([vowel_order.find(c) for c in s] for s in x),
         kind = 'mergesort'
     ).sort_values(by = ['language'], kind = 'mergesort')
     return data
+
+def consonant_challenge_sort(data: pd.DataFrame):
+    data = data.sort_values(
+        by = 'classification',
+        key = lambda x: pd.Series([consonant_order.find(c) for c in s] for s in x),
+    ).sort_values(by = 'file', kind = 'mergesort').sort_values(
+        by = 'consonant',
+        key = lambda x: pd.Series([consonant_order.find(c) for c in s] for s in x),
+        kind = 'mergesort'
+    )
+    return data
+
+sorting_fn = {'wv': world_vowel_sort, 'cc': consonant_challenge_sort}
 
 class HumanProbabilities(Probabilities):
     spec: HumanProbabilitySpec

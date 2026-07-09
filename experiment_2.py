@@ -60,9 +60,10 @@ if task < 22 or task == 24: # classifier
         model_name = 'consonants'
         fold = None
         train_split = 'train'
-        eval_split = 'test'
-        dataset_name = 'timitEC'
+        eval_split = 'dev'
+        dataset_name = 'cc'
         base_model = 'w2v2-large'
+        max_steps = 500000
     model_training = f'max_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}'
 
 elif task in [22, 23]: # ASR

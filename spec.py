@@ -352,7 +352,7 @@ class FrozenSpec(SpecUnit, name = 'frozen', allowed_values = NaturalNumbers()):
         super().__init__(value, *args, **kwargs)
 
 class TrainingDatasets(Container):
-    base_datasets = ['timit', 'librispeech', 'librispeechFR', 'bl', 'wv']
+    base_datasets = ['timit', 'librispeech', 'librispeechFR', 'bl', 'wv', 'timitEC']
     language_variants = ['EN', 'FR'] # one language
     neutral_variants = ['EV', 'MV', 'S', 'A', 'CL', 'N', 'Responses', 'Nonnative'] # these don't affect parsing in any way
     special_variants = ['10Fold'] # only one special variant allowed
@@ -365,7 +365,7 @@ class TrainingDatasets(Container):
         """The base training dataset without any variant information."""
 
         if x in self:
-            return cast(re.Match[str], self.parser.search(x)).group(1)
+            return cast(re.Match[str], self.parser.fullmatch(x)).group(1)
         else:
             raise ValueError(f"{x} is not a valid dataset.")
     
@@ -430,9 +430,9 @@ class PoolingMethodSpec(SpecUnit, name = 'method', allowed_values = ['centreMean
         if self.value in ['centreMeans', 'cvc']:
             return ['vowels']
         else:
-            return ['vowels', 'cvc']
+            return ['vowels', 'cvc', 'consonants']
 
-class PoolingTargetSpec(SpecUnit, name = 'target', allowed_values = ['vowels', 'cvc']):
+class PoolingTargetSpec(SpecUnit, name = 'target', allowed_values = ['vowels', 'cvc', 'consonants']):
     """Specification unit for pooling target."""
 
 class PoolingSpec(SpecComplex, name = 'pooling', value_types = [PoolingMethodSpec, PoolingTargetSpec]):
@@ -545,7 +545,7 @@ class ModelSpec(SpecComplex, name = 'model', value_types = [BaseSpec, TrainingSp
 class HumanSpec(SpecUnit, name = 'humans', allowed_values = ['humans', 'humansFR']):
     """Specification of participant response pool."""
 
-class TestDatasetSpec(SpecUnit, name = 'test_dataset', allowed_values = ['wv']):
+class TestDatasetSpec(SpecUnit, name = 'test_dataset', allowed_values = ['wv', 'cc']):
     """Specification of dataset containing test stimuli."""
 
 class ProbabilitySpec(SpecComplex, name = 'probability', value_types = [ModelSpec, PoolingSpec, TestDatasetSpec], optional = PoolingSpec):

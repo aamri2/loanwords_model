@@ -59,12 +59,12 @@ def compute_metrics(p: ProbabilitiesMap) -> pd.DataFrame:
         # native only on held-out data
         js_native = p.js_divergence(humans, prob, 'file', language=native, training=['test', 'no'])
         data['JS-native'].append(js_native.mean())
-        js_nonnative = p.js_divergence(humans, prob, 'file', language=nonnative)
+        js_nonnative = p.js_divergence(humans, prob, 'file', language=nonnative, training=['test', 'no'])
         data['JS-nonnative'].append(js_nonnative.mean())
 
         acc_native = p.accuracy(humans, prob, 'file', language=native, training=['test', 'no'])
         data['acc-native'].append(acc_native)
-        acc_nonnative = p.accuracy(humans, prob, 'file', language=nonnative)
+        acc_nonnative = p.accuracy(humans, prob, 'file', language=nonnative, training=['test', 'no'])
         data['acc-nonnative'].append(acc_nonnative)
 
     return pd.DataFrame(data)
@@ -78,25 +78,42 @@ def compute_benchmarks(datasets: dict[str, datasets.DatasetDict]) -> pd.DataFram
     wv['input_values'] = wv['input_values'].map(tuple)
     metrics = {'dataset': [], 'accuracy_ceil': [], 'mean_js_div': [], 'js_div_se': []}
     for name, dataset in datasets.items():
-        df = pd.concat((cast(pd.DataFrame, dataset[f'fold_{i}'].to_pandas()) for i in range(10)), keys=range(10)).reset_index(level=0, names='fold')
-        if 'file' not in df.columns or 'vowel' not in df.columns:
-            df['input_values'] = df['input_values'].map(tuple)
-            df = df.merge(wv) # add metadata
-        # calculate accuracy ceiling
-        modes = df.groupby('file')['label'].agg(lambda x: x.value_counts().index[0]).rename('mode')
-        df = df.merge(modes, on='file') # add modal labels
-        accuracy = (df['label'] == df['mode']).astype(int).mean()
-        distributions =  df.pivot_table(columns='label', index=['fold', 'vowel_language' if 'vowel_language' in df.columns else 'vowel'], aggfunc='size', fill_value=0).apply(lambda x: x/x.sum())
+        # df = pd.concat((cast(pd.DataFrame, dataset[f'fold_{i}'].to_pandas()) for i in range(10)), keys=range(10)).reset_index(level=0, names='fold')
+        # if 'file' not in df.columns or 'vowel' not in df.columns:
+        #     df['input_values'] = df['input_values'].map(tuple)
+        #     df = df.merge(wv) # add metadata
+        # # calculate accuracy ceiling
+        # modes = df.groupby('file')['label'].agg(lambda x: x.value_counts().index[0]).rename('mode')
+        # df = df.merge(modes, on='file') # add modal labels
+        # accuracy = (df['label'] == df['mode']).astype(int).mean()
+        # distributions =  df.pivot_table(columns='label', index=['fold', 'vowel_language' if 'vowel_language' in df.columns else 'vowel'], aggfunc='size', fill_value=0).apply(lambda x: x/x.sum())
         js_divs = []
         for fold in range(10):
-            train_distributions = distributions.xs(fold, level=0)
-            test_distributions = distributions[distributions.index.get_level_values(0) != fold].groupby('vowel_language' if 'vowel_language' in df.columns else 'vowel').mean()
-            js_divs.append(jensenshannon(train_distributions, test_distributions.loc[train_distributions.index], axis=1).mean())
+            train_df = cast(pd.DataFrame, dataset[f'train_{fold}'].to_pandas())
+            train_df['input_values'] = train_df['input_values'].map(tuple)
+            train_df = train_df.merge(wv)\
+                .pivot_table(
+                    columns='label',
+                    index='vowel_language' if 'vowel_language' in train_df.columns else 'vowel',
+                    aggfunc='size',
+                    fill_value=0
+                ).apply(lambda x: x/x.sum(), axis = 1)
+            test_df = cast(pd.DataFrame, dataset[f'test_{fold}'].to_pandas())
+            test_df['input_values'] = test_df['input_values'].map(tuple)
+            test_df = test_df.merge(wv)\
+                .pivot_table(
+                    columns='label',
+                    index='vowel_language' if 'vowel_language' in train_df.columns else 'vowel',
+                    aggfunc='size',
+                    fill_value=0
+                ).apply(lambda x: x/x.sum(), axis = 1)
+            js_divs.append(jensenshannon(train_df, test_df.loc[train_df.index], axis=1).mean())
+            print(train_df)
+            print(test_df)
         js_divs = pd.Series(js_divs)
         metrics['dataset'].append(name)
-        metrics['accuracy_ceil'].append(accuracy)
         metrics['mean_js_div'].append(js_divs.mean())
-        metrics['js_div_se'].append(js_divs.std() / (len(js_divs)**.5))
+        metrics['js_div_sem'].append(js_divs.sem())
     return pd.DataFrame(metrics)
 
 def assimilation_heatmaps(p: ProbabilitiesMap, title_generator:Callable[[ModelSpec], str]|None=None):
@@ -180,9 +197,9 @@ df1['lang'] = df1['model_var'].apply(lambda x: 'EN' if 'EN' in x else 'FR' if 'F
 df1['domain'] = df1['model_var'].apply(lambda x: 'non-nat' if 'Nonnative' in x else 'nat')
 df1[[col for col in df1.columns if 'model' not in col]]\
     .groupby(['lang', 'domain', 'arch', 'rep'])\
-    .agg(['mean', 'sem'])\
-    .xs('EN').xs('nat').xs('formant', level=1)\
-    .style.highlight_min(subset=pd.IndexSlice[:, pd.IndexSlice[:'JS-nonnative', 'mean']]).highlight_max(subset=pd.IndexSlice[:, pd.IndexSlice['acc-native':, 'mean']])
+    .agg(['mean', 'sem'])#\
+    # .xs('EN').xs('nat').xs('formant', level=1)\
+    # .style.highlight_min(subset=pd.IndexSlice[:, pd.IndexSlice[:'JS-nonnative', 'mean']]).highlight_max(subset=pd.IndexSlice[:, pd.IndexSlice['acc-native':, 'mean']])
 # %%
 p2 = ProbabilitiesMap(path='probabilities/experiment_2/')
 df2 = compute_metrics(p2)
@@ -191,5 +208,7 @@ df2['type'] = df2['model_var'].apply(lambda x: 'gold' if 'wv' in x else 'pseudo-
 df2['lang'] = df2['model_var'].apply(lambda x: 'EN' if 'w2v2-large' in x else 'FR' if 'w2v2fr-large' in x else None)
 df2[[col for col in df2.columns if 'model' not in col]]\
     .groupby(['lang', 'type'])\
-    .agg(['mean', 'sem'])\
-    .style.highlight_min(subset=pd.IndexSlice[:, pd.IndexSlice[:'JS-nonnative', 'mean']]).highlight_max(subset=pd.IndexSlice[:, pd.IndexSlice['acc-native':, 'mean']])
+    .agg(['mean', 'sem'])#\
+    # .style.highlight_min(subset=pd.IndexSlice[:, pd.IndexSlice[:'JS-nonnative', 'mean']]).highlight_max(subset=pd.IndexSlice[:, pd.IndexSlice['acc-native':, 'mean']])
+
+# %%

@@ -15,6 +15,7 @@ from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, train
 from tqdm import tqdm
 from functools import cached_property
 from collections import defaultdict
+import re
 
 _DATASET_PATH = '../'
 _DATASET_PREFIX = 'prep'
@@ -137,7 +138,8 @@ class TranslationDict(dict):
         return key
 
 consonants = {
-    'timit': ['b', 'ch', 'd', 'dh', 'dx', 'er', 'f', 'g', 'jh', 'k', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh'],
+    'timit': ['b', 'ch', 'd', 'dh', 'dx', 'f', 'g', 'jh', 'k', 'hh', 'l', 'm', 'n', 'ng', 'p', 'r', 's', 'sh', 't', 'th', 'v', 'w', 'y', 'z', 'zh'],
+    'timitEC': ['p', 't', 'k', 'b', 'd', 'ɡ', 'h', 'f', 'θ', 's', 'ʃ', 'v', 'ð', 'z', 'ʒ', 'tʃ', 'dʒ', 'm', 'n', 'ŋ', 'r', 'l', 'j', 'w', 'y'],
     'librispeech': ["b", "d", "dʒ", "f", "h", "j", "k", "l", "m", "n", "p", "s", "t", "tʃ", "v", "w", "z", "ð", "ŋ", "ɡ", "ɹ", "ɾ", "ʃ", "ʒ", "θ"],
     'librispeechFR': ['b', 'd', 'dʒ', 'f', 'j', 'k', 'l', 'm', 'n', 'p', 's', 't', 'tʃ', 'v', 'w', 'z', 'ɡ', 'ɲ', 'ʁ', 'ʃ', 'ʒ'],
     'bl': ['n', 'b', 'k', 's', 'Z', 'v', 'j', 'm', 'w', 'g', 't', 'R', 'l', 'd', 'S', 'N', 'z', 'p', 'f']
@@ -145,15 +147,31 @@ consonants = {
 
 vowels = {
     'timit': ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ah', 'ow', 'uh', 'uw'],
+    'timitEC': ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ay', 'ah', 'oy', 'ow', 'uh', 'uw', 'er', 'ix'],
     'bl': ['i', 'y', 'e', 'E', 'deux', 'neuf', 'a', 'a~', 'o', 'O', 'o~', 'u', 'U~'],
 }
 
 translators = defaultdict(lambda: defaultdict(TranslationDict), {
     'timit': defaultdict(TranslationDict, {
-        'wv': TranslationDict({'iy': 'i', 'ih': 'ɪ', 'ey': 'eɪ', 'eh': 'ɛ', 'ae': 'æ', 'aa': 'ɑ', 'ah': 'ʌ', 'ow': 'oʊ', 'uw': 'u', 'uh': 'ʊ'}),
+        'wv': TranslationDict({
+            'iy': 'i', 'ih': 'ɪ', 'ey': 'eɪ', 'eh': 'ɛ', 'ae': 'æ', 'aa': 'ɑ', 'ah': 'ʌ', 'ow': 'oʊ', 'uw': 'u', 'uh': 'ʊ',
+            'sh': 'ʃ', 'g': 'ɡ', 'ch': 'tʃ', 'dh': 'ð', 'dx': 'd', 'jh': 'dʒ', 'ng': 'ŋ', 'th': 'θ', 'y': 'j', 'zh': 'ʒ',
+        }),
+        'cc': TranslationDict({
+            'iy': 'i', 'ih': 'ɪ', 'ey': 'eɪ', 'eh': 'ɛ', 'ae': 'æ', 'aa': 'ɑ', 'ah': 'ʌ', 'ow': 'oʊ', 'uw': 'u', 'uh': 'ʊ',
+            'sh': 'ʃ', 'g': 'ɡ', 'ch': 'tʃ', 'dh': 'ð', 'dx': 'd', 'jh': 'dʒ', 'ng': 'ŋ', 'th': 'θ', 'y': 'j', 'zh': 'ʒ', 'hh': 'h',
+        }),
     }),
     'bl': defaultdict(TranslationDict, {
-        'wv': TranslationDict({'i': 'i', 'y': 'y', 'e': 'e', 'E': '\u025b', 'deux': '\u00f8', 'neuf': '\u0153', 'a': 'a', 'a~': '\u0251\u0303', 'o': 'o', 'O': '\u0254', 'o~': '\u0254\u0303', 'u': 'u', 'U~': '\u025b\u0303'}),
+        'wv': TranslationDict({
+            'i': 'i', 'y': 'y', 'e': 'e', 'E': '\u025b', 'deux': '\u00f8', 'neuf': '\u0153', 'a': 'a', 'a~': '\u0251\u0303', 'o': 'o', 'O': '\u0254', 'o~': '\u0254\u0303', 'u': 'u', 'U~': '\u025b\u0303',
+            'g': 'ɡ', 'S': 'ʃ', 'R': 'r'
+        }),
+    }),
+    'cc': defaultdict(TranslationDict, {
+        'wv': TranslationDict({
+            'sh': 'ʃ', 'g': 'ɡ', 'ch': 'tʃ', 'dh': 'ð', 'dx': 'd', 'dj': 'dʒ', 'ng': 'ŋ', 'th': 'θ', 'y': 'j', 'zh': 'ʒ',
+        }),
     }),
 })
 
@@ -513,6 +531,19 @@ def prepare_wvFR10Fold():
     prep_wvFR10Fold = k_fold(prep_wvFR, stratify_by_column='label')
     return unannotate_dataset(prep_wvFR10Fold)
 
+def prepare_cc():
+    """Consonant Challenge Corpus"""
+
+    cc = datasets.load_dataset('../cc').cast_column('audio', datasets.Audio(sampling_rate=16000)).remove_columns('label')
+    consonant_finder = re.compile(r'(?<=\d[aiu])(.*?)(?=[aiu]\d)') # files are named XNVCVN.wav, only three vowels
+    cc = cc.map(lambda row: {'label': consonant_finder.search(row['audio']['path']).group()})\
+        .map(lambda row: {'label': translators['cc']['wv'][row['label']]})\
+        .class_encode_column('label')\
+        .shuffle()
+    cc = audio_to_input_values(cc)
+    cc['dev'] = cc.pop('validation')
+    return cc
+
 def prepare_timit_ctc(aligned = False):
     """Prepares TIMIT for CTC sequence classification."""
     timit = datasets.load_dataset('timit_asr', data_dir='../timit/TIMIT')
@@ -714,6 +745,77 @@ def prepare_timitEV():
     prep_timitEV = audio_to_input_values(timitEV)
 
     return unannotate_dataset(prep_timitEV)
+
+def prepare_timitEC():
+    """Extracts TIMIT intervocalic consonant sequences into a dataset, which is prepared for training."""
+    
+    timit = cast(DatasetDict, datasets.load_dataset('timit_asr', data_dir='../timit/TIMIT'))
+    timit = timit.remove_columns(['file', 'word_detail', 'dialect_region', 'sentence_type', 'speaker_id', 'id'])
+
+    timit_folding = {'ao': 'aa', 'ax': 'ah', 'ax-h': 'ah', 'axr': 'er', 'hv': 'hh', 'ix': 'ih', 'el': 'l', 'em': 'm', 'en': 'n', 'nx': 'n', 'eng': 'ng', 'ux': 'uw'} # did not merge zh/sh
+    timit_vowels = ['iy', 'ih', 'eh', 'ey', 'ae', 'aa', 'ay', 'ah', 'oy', 'ow', 'uh', 'uw', 'er', 'ix']
+    target_labels = {'b': 'b', 'ch': 'tʃ', 'd': 'd', 'dh': 'ð', 'dx': 'd', 'f': 'f', 'g': 'ɡ', 'jh': 'dʒ', 'k': 'k', 'l': 'l', 'm': 'm', 'n': 'n', 'ng': 'ŋ', 'p': 'p', 'r': 'r', 's': 's', 'sh': 'ʃ', 't': 't', 'th': 'θ', 'v': 'v', 'w': 'w', 'y': 'j', 'z': 'z', 'zh': 'ʒ'} # desired label: timit label
+
+    def find_targets(batch):
+        audio_length = batch['phonetic_detail']['stop'][-1]
+        # fold phones
+        utterance = [timit_folding.get(phone, phone) for phone in cast(list[str], batch['phonetic_detail']['utterance'])]
+        # positions and labels of all V+CV+ sequences (excluding non-target consonants)
+        target_consonant_indices = [i for i, phone in enumerate(utterance) if phone in target_labels.keys()]
+        consonant_indices = [i for i, phone in enumerate(utterance) if phone in timit_vowels]
+        sequence_start = [None for i in target_consonant_indices]
+        sequence_end = [None for i in target_consonant_indices]
+        sequence_consonant = [target_labels[utterance[i]] for i in target_consonant_indices]
+        for i, target_index in enumerate(target_consonant_indices):
+            preceding_consonant_index = max(target_consonant_indices[:i] + [j for j in consonant_indices if j < target_index] + [0])
+            sequence_start[i] = batch['phonetic_detail']['start'][preceding_consonant_index + 1]
+            following_consonant_index = min([j for j in target_consonant_indices[i:] if j > target_index] + [j for j in consonant_indices if j > target_index] + [len(utterance)])
+            sequence_end[i] = batch['phonetic_detail']['stop'][following_consonant_index - 1]
+            syllable_length = sequence_end[i] - sequence_start[i]
+            if syllable_length < 4000: # less than an eighth of a second, pad with more context
+                sequence_end[i] = min(sequence_end[i] + 2000 - syllable_length//2, audio_length) # centre around centre of target, unless hits edge of sentence
+                sequence_start[i] = max(sequence_end[i] - 4000, 0)
+                sequence_end[i] = sequence_start[i] + 4000 # in case it was near the start
+        batch['sequence_start'] = sequence_start
+        batch['sequence_end'] = sequence_end
+        batch['sequence_consonant'] = sequence_consonant
+        return batch
+    timit = timit.map(find_targets) # breaks if we keep original audio feature
+
+    def extract_syllables(dataset: Dataset):
+        for row in dataset.to_iterable_dataset():
+            sampling_rate = row['audio']['sampling_rate']
+            for sequence_start, sequence_end, sequence_consonant in zip(row['sequence_start'], row['sequence_end'], row['sequence_consonant']):
+                yield {
+                    'audio': {
+                        'array': row['audio']['array'][sequence_start:sequence_end],
+                        'sampling_rate': sampling_rate,
+                    },
+                    'label': sequence_consonant
+                }
+            
+    timitEC_test = Dataset.from_generator(
+        extract_syllables,
+        features = datasets.Features({
+            'audio': datasets.Audio(sampling_rate=16000, decode=True),
+            'label': datasets.Value('string'),
+        }),
+        gen_kwargs = {'dataset': timit['test']},
+        split = datasets.Split.TEST,
+    )
+    timitEC_train = Dataset.from_generator(
+        extract_syllables,
+        features = datasets.Features({
+            'audio': datasets.Audio(sampling_rate=16000, decode=True),
+            'label': datasets.Value('string'),
+        }),
+        gen_kwargs = {'dataset': timit['train']},
+        split = datasets.Split.TRAIN,
+    )
+    timitEC = datasets.DatasetDict({'test': timitEC_test, 'train': timitEC_train}).class_encode_column('label')
+    prep_timitEC = audio_to_input_values(timitEC)
+
+    return unannotate_dataset(prep_timitEC)
 
 
 def prepare_masked_targets():
