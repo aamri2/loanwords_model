@@ -85,6 +85,7 @@ elif task in [22, 23, 25]: # ASR
         model_name = 'ASR2'
         dataset_name = 'librispeech'
         base_model = 'w2v2-large'
+        language = 'EN'
     
     tokenizer = Wav2Vec2PhonemeCTCTokenizer(f'../prep_{dataset_name}/vocab.json', do_phonemize=False)
     processor = Wav2Vec2Processor(feature_extractor, tokenizer)
