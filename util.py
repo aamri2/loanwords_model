@@ -85,9 +85,9 @@ class ProbabilitiesMap(Mapping):
         return probabilities
     
     def heatmap(self, keys: Sequence[AnyProbabilitiesSpec], *args: str, **kwargs: str | Iterable[str]):
-        df = pd.concat((self[key].pool(*args, **kwargs) for key in keys), keys=[str(key) for key in keys]).reset_index(level=0,names='p')
-        g = sns.FacetGrid(df, col_wrap=min(len(keys), 3), col='p', height=2.5)
-        g.map_dataframe(lambda data, **kwargs: sns.heatmap(data[[column for column in df.columns if column != 'p']], **kwargs), cmap = 'crest', square = True, xticklabels = True, yticklabels = True)
+        df = pd.concat((self[key].pool(*args, **kwargs) for key in keys), keys=[str(key) for key in keys]).reset_index(level=0,names='model')
+        g = sns.FacetGrid(df, col_wrap=min(len(keys), 3), col='model', height=2.5)
+        g.map_dataframe(lambda data, **kwargs: sns.heatmap(data[[column for column in df.columns if column != 'model']], **kwargs), cmap = 'crest', square = True, xticklabels = True, yticklabels = True)
         plt.suptitle(f'where {kwargs}', wrap=True)
         plt.subplots_adjust(top=.9)
         plt.show(block = False)
