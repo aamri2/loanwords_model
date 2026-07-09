@@ -934,48 +934,27 @@ def prepare_librispeechFR_ctc():
 
     return librispeechFR, vocab_dict
 
-def prepare_librispeech_ctc(classic=False, word_boundaries=False):
+def prepare_librispeech_ctc():
     """
-    Prepares Multilingual LibriSpeech English 10k for CTC training. Uses the first 1% of the train set (approx. 100 hours).
-    
-    If classic = True, prepares classic LibriSpeech 100h instead.
+    Prepares LibriSpeech 100h for CTC training.
     """
 
-    if classic:
-        librispeech = datasets.load_dataset('openslr/librispeech_asr', verification_mode='no_checks', data_dir='all', data_files={
-            'train.clean.100': 'train.clean.100/*.parquet',
-            'validation.clean': 'validation.clean/*.parquet'
-        })
-        librispeech = librispeech.remove_columns(
-            ['file', 'id', 'speaker_id', 'chapter_id']
-        )
-    else:
-        librispeech = datasets.load_dataset('parler-tts/mls_eng_10k', verification_mode='no_checks', data_dir='data', data_files={
-            'train': [f'train-0000{i}-of-00317.parquet' for i in range(3)],
-            'test': 'test-00000-of-00001.parquet',
-            'dev': 'dev-00000-of-00001.parquet'
-        })
-        librispeech = librispeech.remove_columns(
-            ['original_path', 'begin_time', 'end_time', 'audio_duration', 'speaker_id', 'book_id']
-        )
+    librispeech = datasets.load_dataset(
+        'openslr/librispeech_asr',
+        verification_mode='no_checks', # otherwise complains about not downloading rest of dataset
+        data_dir='clean',
+        data_files={'train': 'train.100/*.parquet', 'dev': 'validation/*.parquet'}
+    )
+
+    folding = {'ə': 'ʌ', 'ɐ': 'ʌ', 'ᵻ': 'ɪ', 'əl': 'l', 'ɚ': 'ɹ', 'n̩': 'n', 'ææ': 'æ', 'ɑ̃': 'ɑ', 'o': 'oʊ', 'x': 'k', 'r': 'ɹ', 'ç': 'ʃ'}
     
-    librispeech = cast(DatasetDict, librispeech)
-
-    folding = {'ə': 'ʌ', 'ɐ': 'ʌ', 'ᵻ': 'ɪ', 'əl': 'l', 'ɚ': 'ɹ', 'n̩': 'n', 'ææ': 'æ', 'ɑ̃': 'ɑ', 'o': 'oʊ', 'x': 'k', 'r': 'ɹ'}
-
-    transcript_column = 'text' if classic else 'transcript' # column name changes
     def phonemize(batch): # removes length marker, ensures rhotic vowels are separate phonemes
-        text = batch[transcript_column]
-        separator = phonemizer.separator.Separator(word = '|' if word_boundaries else '', phone = ' ')
+        text = batch['text']
+        separator = phonemizer.separator.Separator(word = '', phone = ' ')
         batch['phone'] = [[folding.get(phone, phone) for phone in phones.replace('ː', '').replace('ɹ', ' ɹ').replace('ɚ', ' ɚ').replace('ɬ', 'ʃ l').replace('ɔ̃', 'ɔ n').replace('aɪə', 'aɪ ə').replace('ɡʲ', 'ɡ j').replace('ʔ', 'ɾ').replace('ɜ ɹ', 'ɚ').replace('ɜ', 'ɚ').replace('iə', 'j ə').split()] for phones in phonemizer.phonemize(text, separator = separator)] # type: ignore # returns a string
         return batch
 
-    librispeech = librispeech.map(phonemize, batched=True, remove_columns=transcript_column)
-
-    def extract_phones(batch):
-        all_phones = sum(batch['phone'], [])
-        vocab = list(set(all_phones))
-        return {'vocab': [vocab], 'all_phones': [all_phones]}
+    librispeech = librispeech.map(phonemize, batched=True)
     
     vocab_dict = _get_vocab_dict(librispeech, 'phone')
     with open('vocab.json', 'w') as f:

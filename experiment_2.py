@@ -15,10 +15,10 @@ task = int(sys.argv[1]) # from slurm array task id
 # [EN neural-max pseudosylls]
 # [FR neural-max gold] x 10
 # [FR neural-max psuedosylls]
-# CTC
 # EN CTC
 # FR CTC
 # EN neural-max intervocalic consonants
+# EN CTC LibriSpeech
 
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 max_steps = 100000
@@ -66,7 +66,7 @@ if task < 22 or task == 24: # classifier
         max_steps = 500000
     model_training = f'max_class_2_{dataset_name}_varHiddenRelu{f"_cross_{fold}" if fold is not None else ""}'
 
-elif task in [22, 23]: # ASR
+elif task in [22, 23, 25]: # ASR
     model_config = {'ctc_head': True, 'ctc_loss_reduction': 'mean'}
     model_name = 'ASR'
     train_split = 'train'
@@ -80,6 +80,10 @@ elif task in [22, 23]: # ASR
         language = 'FR'
         dataset_name = 'bl'
         base_model = 'w2v2fr-large'
+    elif task == 25:
+        eval_split = 'dev'
+        model_name = 'ASR2'
+        dataset_name = 'librispeech'
     
     tokenizer = Wav2Vec2PhonemeCTCTokenizer(f'../prep_{dataset_name}/vocab.json', do_phonemize=False)
     processor = Wav2Vec2Processor(feature_extractor, tokenizer)
