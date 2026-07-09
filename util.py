@@ -105,7 +105,7 @@ class ProbabilitiesMap(Mapping):
         q = self[key2].pool(*args, **kwargs)
         common_index = p.index.intersection(q.index)
 
-        js_divergences = jensenshannon(p.loc[common_index], q.loc[common_index], axis=1) # square JS distance to get JS divergence
+        js_divergences = jensenshannon(p.loc[common_index], q.loc[common_index], axis=1) ** 2 # square JS distance to get JS divergence
         return js_divergences
     
     @overload
