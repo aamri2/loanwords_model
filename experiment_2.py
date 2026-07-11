@@ -19,6 +19,7 @@ task = int(sys.argv[1]) # from slurm array task id
 # FR CTC
 # EN neural-max intervocalic consonants
 # EN CTC LibriSpeech
+# FR CTC LibriSpeechFR
 
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 max_steps = 100000
@@ -80,12 +81,17 @@ elif task in [22, 23, 25]: # ASR
         language = 'FR'
         dataset_name = 'bl'
         base_model = 'w2v2fr-large'
-    elif task == 25:
+    elif task in [25, 26]:
         eval_split = 'dev'
         model_name = 'ASR2'
-        dataset_name = 'librispeech'
-        base_model = 'w2v2-large'
-        language = 'EN'
+        if task == 25:
+            dataset_name = 'librispeech'
+            base_model = 'w2v2-large'
+            language = 'EN'
+        elif task == 26:
+            dataset_name = 'librispeechFR'
+            base_model = 'w2v2fr-large'
+            language = 'FR'
     
     tokenizer = Wav2Vec2PhonemeCTCTokenizer(f'../prep_{dataset_name}/vocab.json', do_phonemize=False)
     processor = Wav2Vec2Processor(feature_extractor, tokenizer)
